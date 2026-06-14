@@ -32,6 +32,12 @@ folder_prefix_depth = 2
 test = "tests/**/test_*.py"
 strip_prefix = "tests/"
 strip_test_filename_prefix = "test_"
+
+# ODS layout example (tools/<tool>/tests/ → tools/<tool>/):
+# [[tool.graphify.tests_covers]]
+# test = "tools/**/tests/test_*.py"
+# strip_prefix = ""
+# collapse_tests_dir = true
 ```
 
 ## Environment flags
