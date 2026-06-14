@@ -2151,8 +2151,18 @@ def main() -> None:
         print("    --backend=<name>        backend to use for community naming (default: auto-detect)")
         print("    --model=<name>          model to use for community naming")
         print("  label <path>            (re)name communities with the configured LLM backend, regenerate report")
+        print("    --heuristic           path/symbol labels without LLM (use alone: no re-cluster)")
+        print("    --if-generic          skip when labels are already non-placeholder")
+        print("    --force               replace existing non-placeholder heuristic labels")
         print("    --backend=<name>        backend to use (default: auto-detect from API keys)")
         print("    --model=<name>          model to use for community naming")
+        print("  enrich [path]           add INFERRED folder links and pytest metadata (default: both)")
+        print("    --folder-links        folder co-location edges only")
+        print("    --pytest              pytest markers + tests_covers from [tool.graphify]")
+        print("    --all                 both passes (default when no flags)")
+        print("  viz [path]              (re)build graph.html or test-file view")
+        print("    --test-files-only     write graph-tests.html (file hubs under test roots)")
+        print("    -o <path>             output HTML path")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --context C             explicit edge-context filter (repeatable)")
@@ -3131,6 +3141,94 @@ def main() -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
+    elif cmd == "label" and "--heuristic" in sys.argv:
+        from graphify.heuristic_labels import apply_heuristic_labels
+
+        watch_path = Path(".")
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        out = graphify_out_dir(watch_path)
+        apply_heuristic_labels(
+            out,
+            project_root=watch_path,
+            force="--force" in sys.argv,
+            if_generic="--if-generic" in sys.argv,
+            skip_html="--no-viz" in sys.argv,
+        )
+        print(f"Done - heuristic labels written to {out}")
+
+    elif cmd == "enrich":
+        from graphify.enrich import apply_enrich
+
+        watch_path = Path(".")
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        only_folder = (
+            "--folder-links" in sys.argv
+            and "--pytest" not in sys.argv
+            and "--all" not in sys.argv
+        )
+        only_pytest = (
+            "--pytest" in sys.argv
+            and "--folder-links" not in sys.argv
+            and "--all" not in sys.argv
+        )
+        folder_links = not only_pytest
+        pytest_enrich = not only_folder
+        out = graphify_out_dir(watch_path)
+        counts = apply_enrich(
+            out,
+            watch_path.resolve(),
+            folder_links=folder_links,
+            pytest=pytest_enrich,
+        )
+        print(f"Done - enrich: {counts}")
+
+    elif cmd == "viz":
+        from graphify.viz_layers import emit_default_html, emit_test_files_html
+
+        watch_path = Path(".")
+        output_path: Path | None = None
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a == "-o" and i_arg + 1 < len(args):
+                output_path = Path(args[i_arg + 1])
+                i_arg += 2
+            elif a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        out = graphify_out_dir(watch_path)
+        if "--test-files-only" in sys.argv:
+            ok = emit_test_files_html(out, output_path=output_path)
+        else:
+            ok = emit_default_html(out, project_root=watch_path)
+        if not ok:
+            sys.exit(1)
+
     elif cmd in ("cluster-only", "label"):
         # `label` is `cluster-only` that always (re)generates community names with
         # the configured backend, even when a .graphify_labels.json already exists.
@@ -3139,6 +3237,8 @@ def main() -> None:
         # the optional positional path can appear in any order (#724).
         no_viz = "--no-viz" in sys.argv
         no_label = "--no-label" in sys.argv
+        use_heuristic = "--heuristic" in sys.argv
+        heuristic_force = "--force" in sys.argv
         _backend_arg = next((a for a in sys.argv if a.startswith("--backend=")), None)
         label_backend = _backend_arg.split("=", 1)[1] if _backend_arg else None
         _model_arg = next((a for a in sys.argv if a.startswith("--model=")), None)
@@ -3250,6 +3350,29 @@ def main() -> None:
                 labels = {cid: f"Community {cid}" for cid in communities}
         elif no_label and not force_relabel:
             labels = {cid: f"Community {cid}" for cid in communities}
+        elif use_heuristic:
+            from graphify.heuristic_labels import build_heuristic_labels
+
+            node_attrs = {
+                str(n["id"]): n for n in _raw.get("nodes", []) if n.get("id")
+            }
+            existing_labels: dict[int, str] = {}
+            if labels_path.exists():
+                try:
+                    existing_labels = {
+                        int(k): v
+                        for k, v in json.loads(
+                            labels_path.read_text(encoding="utf-8")
+                        ).items()
+                    }
+                except Exception:
+                    existing_labels = {}
+            labels = build_heuristic_labels(
+                communities,
+                node_attrs,
+                force=heuristic_force,
+                existing=existing_labels,
+            )
         else:
             # No labels file yet (or `graphify label` forced a refresh). When run
             # standalone there is no orchestrating agent to do skill.md Step 5, so

@@ -2,32 +2,58 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.39+trifour.3`
+
+- **`kind` on AST nodes** — `file`, `class`, `function`, `method`, `other` (+ `finalize_node_kinds` on bulk extract).
+- **`graphify label --heuristic`** — path/symbol community names without LLM (`graphify/heuristic_labels.py`).
+- **`graphify enrich`** — INFERRED `same_directory` / `shared_folder` edges; pytest `metadata.markers` + config-driven `tests_covers` (`graphify/enrich.py`, `graphify/config.py`).
+- **`graphify viz --test-files-only`** — `graph-tests.html` file-hub layer (`graphify/viz_layers.py`).
+- **Aggregated `to_html`** — folder-affinity community edges when `GRAPHIFY_FOLDER_AFFINITY` ≠ `0`.
+- **`update` post-build** — optional enrich + heuristic via env (`GRAPHIFY_FOLDER_EDGES`, `GRAPHIFY_PYTEST_ENRICH`, `GRAPHIFY_HEURISTIC_LABELS`).
+
 ## Changes in `0.8.39+trifour.2`
 
-- **`cluster-only` / `label`** — write outputs via `graphify_out_dir(watch_path)` so `GRAPHIFY_OUT` matches read path (fixes stray repo-root `graphify-out/` when consumers use `.local/graphify-out`).
+- **`cluster-only` / `label`** — write outputs via `graphify_out_dir(watch_path)` so `GRAPHIFY_OUT` matches read path.
 
 ## Changes in `0.8.39+trifour.1`
 
 - **`graphify/paths.py`** — single source of truth for `GRAPHIFY_OUT` (manifest, cache, memory, converted, scan skip dirs).
-- **`detect.py`** — manifest load/save/incremental resolve paths at **call time** (no import-time `graphify-out/manifest.json` default).
+- **`detect.py`** — manifest load/save/incremental resolve paths at **call time**.
 - **`cache.py`**, **`watch.py`**, **`__main__.py`** — use `paths` instead of module-level env snapshots.
 
-## ODS consumption
-
-Pin in ODS `pyproject.toml`:
+## Consumer configuration (`pyproject.toml`)
 
 ```toml
-[dependency-groups]
-dev = ["graphifyy", ...]
+[tool.graphify]
+test_roots = ["tests"]
+folder_prefix_depth = 2
 
-[tool.uv.sources]
-graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "2ea354c" }
+[[tool.graphify.tests_covers]]
+test = "tests/**/test_*.py"
+strip_prefix = "tests/"
+strip_test_filename_prefix = "test_"
 ```
 
-Set `GRAPHIFY_OUT=.local/graphify-out` in ODS `.env`; run via `dev/graphify` → `uv run graphify`.
+## Environment flags
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `GRAPHIFY_OUT` | `graphify-out` | Output directory (use `.local/graphify-out` in consumers) |
+| `GRAPHIFY_FOLDER_EDGES` | `1` | `enrich` / post-`update` folder edges |
+| `GRAPHIFY_FOLDER_AFFINITY` | `1` | Folder links in aggregated `graph.html` |
+| `GRAPHIFY_PYTEST_ENRICH` | `1` | Pytest markers + `tests_covers` on `update` |
+| `GRAPHIFY_HEURISTIC_LABELS` | `0` | Heuristic relabel after `update` (set `1` in consumer wrapper) |
+
+## ODS / iris_connect consumption
+
+```toml
+[tool.uv.sources]
+graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "<pin-after-release>" }
+```
+
+Set `GRAPHIFY_OUT=.local/graphify-out` in `.env`; run via `dev/graphify` → `uv run graphify`.
 
 ## Not yet in this fork
 
 - ObjectScript tree-sitter / regex extractor (`.cls` still mapped to Apex upstream).
 - OpenRouter as a built-in provider (use `~/.graphify/providers.json` upstream).
-- Shell hooks in `hooks.py` still reference literal `graphify-out/` paths.

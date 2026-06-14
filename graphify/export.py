@@ -667,6 +667,21 @@ def to_html(
             for (cu, cv), w in edge_counts.items():
                 meta.add_edge(str(cu), str(cv), weight=w,
                               relation=f"{w} cross-community edges", confidence="AGGREGATED")
+            if os.environ.get("GRAPHIFY_FOLDER_AFFINITY", "1") != "0":
+                from graphify.enrich import community_folder_affinity
+                nodes_for_affinity = [
+                    {"id": nid, "community": node_to_community.get(nid), **data}
+                    for nid, data in G.nodes(data=True)
+                    if node_to_community.get(nid) is not None
+                ]
+                for cu, cv, relation, _w in community_folder_affinity(
+                    nodes_for_affinity, set(edge_counts.keys())
+                ):
+                    if not meta.has_edge(str(cu), str(cv)):
+                        meta.add_edge(
+                            str(cu), str(cv), weight=1,
+                            relation=relation, confidence="INFERRED",
+                        )
             if meta.number_of_nodes() <= 1:
                 print("Single community - aggregated view not useful. Skipping graph.html.")
                 return

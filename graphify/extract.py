@@ -2219,7 +2219,9 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     if config.ts_module == "tree_sitter_swift":
         swift_protocol_names, swift_class_names = _swift_pre_scan(root, source)
 
-    def add_node(nid: str, label: str, line: int) -> None:
+    from graphify.node_kind import KIND_CLASS, KIND_FILE, KIND_FUNCTION, KIND_METHOD, KIND_OTHER
+
+    def add_node(nid: str, label: str, line: int, *, kind: str | None = None) -> None:
         if nid not in seen_ids:
             seen_ids.add(nid)
             nodes.append({
@@ -2228,6 +2230,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                 "file_type": "code",
                 "source_file": str_path,
                 "source_location": f"L{line}",
+                "kind": kind or KIND_OTHER,
             })
 
     def add_edge(src: str, tgt: str, relation: str, line: int,
@@ -2256,7 +2259,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         return nid
 
     file_nid = _make_id(str(path))
-    add_node(file_nid, path.name, 1)
+    add_node(file_nid, path.name, 1, kind=KIND_FILE)
 
     def walk(node, parent_class_nid: str | None = None) -> None:
         t = node.type
@@ -2289,7 +2292,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             class_name = _read_text(name_node, source)
             class_nid = _make_id(stem, class_name)
             line = node.start_point[0] + 1
-            add_node(class_nid, class_name, line)
+            add_node(class_nid, class_name, line, kind=KIND_CLASS)
             add_edge(file_nid, class_nid, "contains", line)
 
             if config.ts_module == "tree_sitter_swift" and any(
@@ -2864,11 +2867,11 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             line = node.start_point[0] + 1
             if parent_class_nid:
                 func_nid = _make_id(parent_class_nid, func_name)
-                add_node(func_nid, f".{func_name}()", line)
+                add_node(func_nid, f".{func_name}()", line, kind=KIND_METHOD)
                 add_edge(parent_class_nid, func_nid, "method", line)
             else:
                 func_nid = _make_id(stem, func_name)
-                add_node(func_nid, f"{func_name}()", line)
+                add_node(func_nid, f"{func_name}()", line, kind=KIND_FUNCTION)
                 add_edge(file_nid, func_nid, "contains", line)
 
             if config.ts_module == "tree_sitter_python":
@@ -11996,6 +11999,10 @@ def extract(
     # even when its source file still exists (#1116).
     for n in all_nodes:
         n["_origin"] = "ast"
+
+    from graphify.node_kind import finalize_node_kinds
+
+    finalize_node_kinds(all_nodes)
 
     return {
         "nodes": all_nodes,

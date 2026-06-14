@@ -728,9 +728,20 @@ def _rebuild_code(
         html_written = False
         if not no_change:
             try:
-                to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
-                html_written = True
-            except ValueError as viz_err:
+                from graphify.enrich import apply_post_build_enrich
+
+                enrich_result = apply_post_build_enrich(out, project_root)
+                if enrich_result:
+                    print(f"[graphify watch] Post-build enrich: {enrich_result}")
+            except Exception as enrich_err:
+                print(f"[graphify watch] Post-build enrich skipped: {enrich_err}")
+
+        if not no_change:
+            try:
+                from graphify.viz_layers import emit_default_html
+
+                html_written = emit_default_html(out, project_root=project_root)
+            except Exception as viz_err:
                 print(f"[graphify watch] Skipped graph.html: {viz_err}")
                 stale = out / "graph.html"
                 if stale.exists():
