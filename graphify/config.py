@@ -16,6 +16,7 @@ class TestsCoversRule:
     test: str
     strip_prefix: str = "tests/"
     strip_test_filename_prefix: str = "test_"
+    collapse_tests_dir: bool = False
 
 
 @dataclass
@@ -63,6 +64,7 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
                 strip_test_filename_prefix=str(
                     item.get("strip_test_filename_prefix", "test_")
                 ),
+                collapse_tests_dir=bool(item.get("collapse_tests_dir", False)),
             )
         )
 
@@ -94,6 +96,8 @@ def production_path_for_test(test_path: str, rule: TestsCoversRule) -> str | Non
     if not match_glob(normalized, rule.test):
         return None
     rel = normalized
+    if rule.collapse_tests_dir:
+        rel = rel.replace("/tests/", "/", 1)
     if rule.strip_prefix and rel.startswith(rule.strip_prefix):
         rel = rel[len(rule.strip_prefix) :].lstrip("/")
     path = Path(rel)

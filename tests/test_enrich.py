@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from graphify.enrich import add_folder_edges, add_pytest_metadata_and_covers
-from graphify.config import GraphifyConfig, TestsCoversRule
+from graphify.config import GraphifyConfig, TestsCoversRule, production_path_for_test
 
 
 @pytest.mark.unit
@@ -70,3 +70,16 @@ def test_pytest_markers_and_tests_covers(tmp_path: Path) -> None:
     assert counts["tests_covers"] == 1
     markers = data["nodes"][0]["metadata"]["markers"]
     assert "integration" in markers
+
+
+@pytest.mark.unit
+def test_collapse_tests_dir_covers_rule() -> None:
+    rule = TestsCoversRule(
+        test="tools/**/tests/test_*.py",
+        strip_prefix="",
+        collapse_tests_dir=True,
+    )
+    assert (
+        production_path_for_test("tools/deploy/tests/test_foo.py", rule)
+        == "tools/deploy/foo.py"
+    )
