@@ -10,16 +10,14 @@ Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` br
 
 ## ODS consumption
 
-Pin in ODS `pyproject.toml` (swap `path` for private GitHub when published):
+Pin in ODS `pyproject.toml`:
 
 ```toml
 [dependency-groups]
 dev = ["graphifyy", ...]
 
 [tool.uv.sources]
-graphifyy = { git = "https://github.com/<org>/graphify.git", rev = "0.8.39+trifour.1" }
-# local dev:
-# graphifyy = { path = "../3rdparty/graphify", editable = true }
+graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "7b9b757" }
 ```
 
 Set `GRAPHIFY_OUT=.local/graphify-out` in ODS `.env`; run via `dev/graphify` → `uv run graphify`.
