@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from graphify.config import GraphifyConfig, load_graphify_config, match_glob, production_path_for_test
+from graphify.config import GraphifyConfig, enrich_flags, load_graphify_config, match_glob, production_path_for_test
 from graphify.node_paths import is_file_hub_node, parent_directory, path_prefix
 
 _EDGE_KEY = "links"
@@ -306,7 +306,7 @@ def apply_enrich(
     data = json.loads(graph_path.read_text(encoding="utf-8"))
     counts: dict[str, Any] = {}
 
-    if folder_links and os.environ.get("GRAPHIFY_FOLDER_EDGES", "1") != "0":
+    if folder_links:
         counts.update(add_folder_edges(data, prefix_depth=depth))
 
     if pytest:
@@ -327,18 +327,17 @@ def apply_enrich(
 
 
 def apply_post_build_enrich(out_dir: Path, project_root: Path) -> dict[str, Any]:
-    """Optional post-update enrich + heuristic labels (env-gated)."""
+    """Optional post-update enrich + heuristic labels (``[tool.graphify]`` + env)."""
     result: dict[str, Any] = {}
-    if os.environ.get("GRAPHIFY_FOLDER_EDGES", "1") != "0" or os.environ.get(
-        "GRAPHIFY_PYTEST_ENRICH", "1"
-    ) != "0":
+    flags = enrich_flags(project_root)
+    if flags["folder_edges"] or flags["pytest_enrich"]:
         result["enrich"] = apply_enrich(
             out_dir,
             project_root,
-            folder_links=os.environ.get("GRAPHIFY_FOLDER_EDGES", "1") != "0",
-            pytest=os.environ.get("GRAPHIFY_PYTEST_ENRICH", "1") != "0",
+            folder_links=flags["folder_edges"],
+            pytest=flags["pytest_enrich"],
         )
-    if os.environ.get("GRAPHIFY_HEURISTIC_LABELS", "0") == "1":
+    if flags["heuristic_labels"]:
         from graphify.heuristic_labels import apply_heuristic_labels
 
         apply_heuristic_labels(

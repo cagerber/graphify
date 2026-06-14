@@ -2284,6 +2284,15 @@ def main() -> None:
 
     cmd = sys.argv[1]
 
+    _LEGACY_ALIASES = {
+        "label-communities": ("label", ["--heuristic"]),
+        "folder-edges": ("enrich", ["--folder-links"]),
+    }
+    if cmd in _LEGACY_ALIASES:
+        new_cmd, inject = _LEGACY_ALIASES[cmd]
+        sys.argv = [sys.argv[0], new_cmd, *inject, *sys.argv[2:]]
+        cmd = new_cmd
+
     # Universal help guard: -h/--help/-? anywhere after the command shows help
     # and stops — prevents flags from silently triggering destructive subcommands
     # (e.g. "cursor install --help" was silently installing into Cursor, #821).

@@ -10,6 +10,7 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 
+from graphify.config import enrich_flags
 from graphify.enrich import community_folder_affinity
 from graphify.node_paths import is_file_hub_node, normalize_source_path
 
@@ -83,10 +84,7 @@ def write_aggregated_html(
             confidence="AGGREGATED",
         )
 
-    if (
-        folder_affinity
-        and os.environ.get("GRAPHIFY_FOLDER_AFFINITY", "1") != "0"
-    ):
+    if folder_affinity and enrich_flags().get("folder_affinity", True):
         for cu, cv, relation, weight in community_folder_affinity(
             nodes, structural_cross
         ):

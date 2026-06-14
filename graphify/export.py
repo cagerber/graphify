@@ -15,6 +15,7 @@ from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
 from graphify.analyze import _node_community_map
 from graphify.build import edge_data
+from graphify.config import enrich_flags
 
 
 # Artifacts worth preserving across rebuilds (non-regenerable without LLM or curation).
@@ -667,7 +668,7 @@ def to_html(
             for (cu, cv), w in edge_counts.items():
                 meta.add_edge(str(cu), str(cv), weight=w,
                               relation=f"{w} cross-community edges", confidence="AGGREGATED")
-            if os.environ.get("GRAPHIFY_FOLDER_AFFINITY", "1") != "0":
+            if enrich_flags().get("folder_affinity", True):
                 from graphify.enrich import community_folder_affinity
                 nodes_for_affinity = [
                     {"id": nid, "community": node_to_community.get(nid), **data}

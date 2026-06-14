@@ -2,6 +2,13 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.39+trifour.4`
+
+- **Git hooks** — `post-commit` / `post-checkout` honour **`GRAPHIFY_OUT`** (no hardcoded `graphify-out/` skip paths or `.graphify_root` reads).
+- **`[tool.graphify]` enrich flags** — `folder_edges`, `folder_affinity`, `pytest_enrich`, `heuristic_labels` (env `GRAPHIFY_*` overrides when set).
+- **CLI aliases** — `label-communities` → `label --heuristic`; `folder-edges` → `enrich --folder-links` (deprecated; prefer fork subcommands).
+- **Bundled skill** — version stamp matches **`0.8.39+trifour.4`** after `graphify install`.
+
 ## Changes in `0.8.39+trifour.3`
 
 - **`kind` on AST nodes** — `file`, `class`, `function`, `method`, `other` (+ `finalize_node_kinds` on bulk extract).
@@ -25,8 +32,12 @@ Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` br
 
 ```toml
 [tool.graphify]
-test_roots = ["tests"]
+test_roots = ["tools"]
 folder_prefix_depth = 2
+folder_edges = true
+folder_affinity = true
+pytest_enrich = true
+heuristic_labels = true   # ODS / iris_connect: on by default in pyproject
 
 [[tool.graphify.tests_covers]]
 test = "tests/**/test_*.py"
@@ -48,7 +59,9 @@ strip_test_filename_prefix = "test_"
 | `GRAPHIFY_FOLDER_EDGES` | `1` | `enrich` / post-`update` folder edges |
 | `GRAPHIFY_FOLDER_AFFINITY` | `1` | Folder links in aggregated `graph.html` |
 | `GRAPHIFY_PYTEST_ENRICH` | `1` | Pytest markers + `tests_covers` on `update` |
-| `GRAPHIFY_HEURISTIC_LABELS` | `0` | Heuristic relabel after `update` (set `1` in consumer wrapper) |
+| `GRAPHIFY_HEURISTIC_LABELS` | from `[tool.graphify]` or `0` | Heuristic relabel after `update` |
+
+**Deprecated CLI aliases (remove from `dev/graphify` when on trifour.4+):** `label-communities`, `folder-edges` — use `label --heuristic` and `enrich --folder-links` directly.
 
 ## ODS / iris_connect consumption
 

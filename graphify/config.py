@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,29 @@ class GraphifyConfig:
     test_roots: list[str] = field(default_factory=lambda: ["tests"])
     tests_covers: list[TestsCoversRule] = field(default_factory=list)
     folder_prefix_depth: int = 2
+    folder_edges: bool = True
+    folder_affinity: bool = True
+    pytest_enrich: bool = True
+    heuristic_labels: bool = False
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Resolve a boolean from env when set; otherwise use *default*."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() not in ("0", "false", "no", "off")
+
+
+def enrich_flags(project_root: Path | str | None = None) -> dict[str, bool]:
+    """Merge ``[tool.graphify]`` enrich defaults with ``GRAPHIFY_*`` env overrides."""
+    cfg = load_graphify_config(project_root)
+    return {
+        "folder_edges": _env_bool("GRAPHIFY_FOLDER_EDGES", cfg.folder_edges),
+        "folder_affinity": _env_bool("GRAPHIFY_FOLDER_AFFINITY", cfg.folder_affinity),
+        "pytest_enrich": _env_bool("GRAPHIFY_PYTEST_ENRICH", cfg.pytest_enrich),
+        "heuristic_labels": _env_bool("GRAPHIFY_HEURISTIC_LABELS", cfg.heuristic_labels),
+    }
 
 
 def _find_pyproject(root: Path) -> Path | None:
@@ -82,6 +106,10 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
         test_roots=[str(r) for r in test_roots],
         tests_covers=rules,
         folder_prefix_depth=folder_prefix_depth,
+        folder_edges=bool(section.get("folder_edges", True)),
+        folder_affinity=bool(section.get("folder_affinity", True)),
+        pytest_enrich=bool(section.get("pytest_enrich", True)),
+        heuristic_labels=bool(section.get("heuristic_labels", False)),
     )
 
 

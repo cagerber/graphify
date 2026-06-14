@@ -25,10 +25,10 @@ _PINNED='__PINNED_PYTHON__'
 if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "import graphify" 2>/dev/null; then
     GRAPHIFY_PYTHON="$_PINNED"
 fi
-# Second probe: read graphify-out/.graphify_python (written by the skill and
+# Second probe: read GRAPHIFY_OUT/.graphify_python (written by the skill and
 # CLI; survives uv-tool reinstalls and is the same source the README documents).
 if [ -z "$GRAPHIFY_PYTHON" ]; then
-    _GFY_PYTHON_FILE="graphify-out/.graphify_python"
+    _GFY_PYTHON_FILE="${GRAPHIFY_OUT:-graphify-out}/.graphify_python"
     if [ -f "$_GFY_PYTHON_FILE" ]; then
         _FROM_FILE=$(cat "$_GFY_PYTHON_FILE" 2>/dev/null | tr -d '[:space:]')
         case "$_FROM_FILE" in
@@ -92,6 +92,7 @@ print(f'[graphify hook] {len(changed)} file(s) changed - rebuilding graph...')
 
 try:
     from graphify.watch import _rebuild_code, _apply_resource_limits
+    from graphify.paths import graphify_out_dir
     _apply_resource_limits()
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0 and hasattr(signal, 'SIGALRM'):
@@ -99,7 +100,7 @@ try:
         signal.alarm(_timeout)
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
     _root = Path('.')
-    _saved = Path('graphify-out/.graphify_root')
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8').strip()
         if _txt:
@@ -115,6 +116,7 @@ except Exception as exc:
 
 _REBUILD_BODY_CHECKOUT = """\
 from graphify.watch import _rebuild_code, _apply_resource_limits
+from graphify.paths import graphify_out_dir
 from pathlib import Path
 import os, signal, sys
 try:
@@ -128,7 +130,7 @@ try:
     # (no changed_paths) is correct here. The flock inside _rebuild_code still
     # prevents pile-ups when commit + checkout fire back-to-back.
     _root = Path('.')
-    _saved = Path('graphify-out/.graphify_root')
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8').strip()
         if _txt:
@@ -200,6 +202,8 @@ _HOOK_SCRIPT = """\
 # churn run-to-run. Pinning it makes graphify-out reproducible.
 export PYTHONHASHSEED=0
 
+_GFY_OUT="${GRAPHIFY_OUT:-graphify-out}"
+
 # Skip during rebase/merge/cherry-pick to avoid blocking --continue with unstaged changes
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 [ -d "$GIT_DIR/rebase-merge" ] && exit 0
@@ -214,8 +218,8 @@ if [ -z "$CHANGED" ]; then
     exit 0
 fi
 
-# Skip when only graphify-out/ artifacts changed (avoids rebuild loop when graph outputs are tracked in git)
-_NON_GRAPH=$(echo "$CHANGED" | grep -v '^graphify-out/' || true)
+# Skip when only GRAPHIFY_OUT artifacts changed (avoids rebuild loop when graph outputs are tracked in git)
+_NON_GRAPH=$(echo "$CHANGED" | grep -v "^${_GFY_OUT}/" || true)
 if [ -z "$_NON_GRAPH" ]; then
     exit 0
 fi
@@ -245,6 +249,8 @@ _CHECKOUT_SCRIPT = """\
 # churn run-to-run. Pinning it makes graphify-out reproducible.
 export PYTHONHASHSEED=0
 
+_GFY_OUT="${GRAPHIFY_OUT:-graphify-out}"
+
 PREV_HEAD=$1
 NEW_HEAD=$2
 BRANCH_SWITCH=$3
@@ -254,8 +260,8 @@ if [ "$BRANCH_SWITCH" != "1" ]; then
     exit 0
 fi
 
-# Only run if graphify-out/ exists (graph has been built before)
-if [ ! -d "graphify-out" ]; then
+# Only run if the graph output directory exists (graph has been built before)
+if [ ! -d "$_GFY_OUT" ]; then
     exit 0
 fi
 
