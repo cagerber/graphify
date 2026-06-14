@@ -2,6 +2,10 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.39+trifour.2`
+
+- **`cluster-only` / `label`** — write outputs via `graphify_out_dir(watch_path)` so `GRAPHIFY_OUT` matches read path (fixes stray repo-root `graphify-out/` when consumers use `.local/graphify-out`).
+
 ## Changes in `0.8.39+trifour.1`
 
 - **`graphify/paths.py`** — single source of truth for `GRAPHIFY_OUT` (manifest, cache, memory, converted, scan skip dirs).

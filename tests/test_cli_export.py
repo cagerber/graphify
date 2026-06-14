@@ -17,6 +17,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _run(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    if env is None:
+        env = os.environ.copy()
+        # Isolate default output-dir tests from caller GRAPHIFY_OUT (e.g. ODS .env).
+        env.pop("GRAPHIFY_OUT", None)
     return subprocess.run(
         [PYTHON, "-m", "graphify"] + args,
         cwd=cwd,
@@ -299,6 +303,28 @@ def test_cluster_only_creates_output_dir_when_missing(tmp_path):
     r = _run(["cluster-only", ".", "--graph", str(graph_src), "--no-viz"], tmp_path)
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "graphify-out" / "GRAPH_REPORT.md").exists()
+
+
+def test_cluster_only_writes_to_graphify_out_env(tmp_path):
+    """cluster-only must write under GRAPHIFY_OUT, not hardcoded graphify-out/ (Trifour 8-18)."""
+    graph_src = tmp_path / "backup" / "graph.json"
+    graph_src.parent.mkdir()
+
+    out_dir = _make_graph(tmp_path)
+    graph_json = out_dir / "graph.json"
+    import shutil
+
+    shutil.copy(graph_json, graph_src)
+    shutil.rmtree(out_dir)
+
+    assert not (tmp_path / "graphify-out").exists()
+
+    env = os.environ.copy()
+    env["GRAPHIFY_OUT"] = ".local/graphify-out"
+    r = _run(["cluster-only", ".", "--graph", str(graph_src), "--no-viz"], tmp_path, env=env)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / ".local" / "graphify-out" / "GRAPH_REPORT.md").exists()
+    assert not (tmp_path / "graphify-out").exists()
 
 
 # Regression test for #1027 - cluster-only must remap labels via node overlap

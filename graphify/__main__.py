@@ -3240,7 +3240,7 @@ def main() -> None:
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
-        out = watch_path / "graphify-out"
+        out = graphify_out_dir(watch_path)
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
         if labels_path.exists() and not force_relabel:
