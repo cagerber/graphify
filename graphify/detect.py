@@ -24,7 +24,7 @@ class FileType(str, Enum):
     VIDEO = "video"
 
 
-_MANIFEST_PATH = "graphify-out/manifest.json"
+from graphify.paths import graphify_out_dir, manifest_path as _resolve_manifest_path, skip_dir_names
 
 CODE_EXTENSIONS = {'.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.ejs', '.ets', '.go', '.rs', '.java', '.groovy', '.gradle', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.luau', '.toc', '.zig', '.ps1', '.ex', '.exs', '.m', '.mm', '.jl', '.vue', '.svelte', '.astro', '.dart', '.v', '.sv', '.svh', '.sql', '.r', '.f', '.F', '.f90', '.F90', '.f95', '.F95', '.f03', '.F03', '.f08', '.F08', '.pas', '.pp', '.dpr', '.dpk', '.lpr', '.inc', '.dfm', '.lfm', '.lpk', '.sh', '.bash', '.json', '.tf', '.tfvars', '.hcl', '.dm', '.dme', '.dmi', '.dmm', '.dmf', '.sln', '.slnx', '.csproj', '.fsproj', '.vbproj', '.razor', '.cshtml', '.cls', '.trigger'}
 DOC_EXTENSIONS = {'.md', '.mdx', '.qmd', '.txt', '.rst', '.html', '.yaml', '.yml'}
@@ -679,7 +679,7 @@ _SKIP_FILES = {
 
 def _is_noise_dir(part: str, parent: "Path | None" = None) -> bool:
     """Return True if this directory name looks like a venv, cache, or dep dir."""
-    if part in _SKIP_DIRS:
+    if part in _SKIP_DIRS or part in skip_dir_names():
         return True
     # Catch *_venv, *_repo/site-packages patterns
     if part.endswith("_venv") or part.endswith("_env"):
@@ -1020,8 +1020,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
                 ignore_patterns.append((root, line))
     include_patterns = _load_graphifyinclude(root)
 
-    # Always include graphify-out/memory/ - query results filed back into the graph
-    memory_dir = root / "graphify-out" / "memory"
+    # Always include <GRAPHIFY_OUT>/memory/ - query results filed back into the graph
+    memory_dir = graphify_out_dir(root) / "memory"
     scan_paths = [root]
     if memory_dir.exists():
         scan_paths.append(memory_dir)
@@ -1067,7 +1067,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
 
     all_files.sort(key=lambda p: str(p))
 
-    converted_dir = root / "graphify-out" / "converted"
+    converted_dir = graphify_out_dir(root) / "converted"
 
     for p in all_files:
         # For memory dir files, skip hidden/noise filtering
@@ -1220,7 +1220,7 @@ def _to_absolute_from_storage(key: str, root: Path) -> str:
 
 
 def load_manifest(
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     root: Path | None = None,
 ) -> dict:
@@ -1232,6 +1232,8 @@ def load_manifest(
     written by an older version (or by a caller that didn't supply ``root``
     to :func:`save_manifest`) remains readable.
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     try:
         raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     except Exception:
@@ -1243,7 +1245,7 @@ def load_manifest(
 
 def save_manifest(
     files: dict[str, list[str]],
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     kind: str = "both",
     root: Path | None = None,
@@ -1263,6 +1265,8 @@ def save_manifest(
     as absolute so they continue to round-trip on the saving machine.
     When ``root`` is None the legacy absolute-keyed format is preserved.
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     existing = load_manifest(manifest_path, root=root)
 
     def _normalise_entry(entry):
@@ -1324,7 +1328,7 @@ def save_manifest(
 
 def detect_incremental(
     root: Path,
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     follow_symlinks: bool | None = None,
     google_workspace: bool | None = None,
@@ -1354,6 +1358,8 @@ def detect_incremental(
     incremental runs. ``None`` (default) means auto-detect: ``True`` when ``root``
     contains at least one direct symlinked child, ``False`` otherwise.
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     full = detect(root, follow_symlinks=follow_symlinks, google_workspace=google_workspace, extra_excludes=extra_excludes)
     # Pass ``root`` so a manifest written with relative keys (post-#777) is
     # re-anchored to the absolute form the rest of this function compares

@@ -17,9 +17,7 @@ try:
 except Exception:
     __version__ = "unknown"
 
-# Output directory — override with GRAPHIFY_OUT env var for worktrees or shared-output setups.
-# Accepts a relative name ("graphify-out-feature") or an absolute path ("/shared/graphify-out").
-_GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+from graphify.paths import graphify_out_dir, default_graph_json_path
 
 
 @functools.lru_cache(maxsize=None)
@@ -69,7 +67,7 @@ def __getattr__(name: str) -> str:
 
 
 def _default_graph_path() -> str:
-    return str(Path(_GRAPHIFY_OUT) / "graph.json")
+    return default_graph_json_path()
 
 
 def _enforce_graph_size_cap_or_exit(gp: Path) -> None:
@@ -3183,7 +3181,7 @@ def main() -> None:
                 i_arg += 1
         if watch_path is None:
             watch_path = Path(".")
-        graph_json = graph_override if graph_override is not None else watch_path / "graphify-out" / "graph.json"
+        graph_json = graph_override if graph_override is not None else graphify_out_dir(watch_path) / "graph.json"
         if not graph_json.exists():
             print(
                 f"error: no graph found at {graph_json} — run /graphify first",
@@ -3325,7 +3323,7 @@ def main() -> None:
             watch_path = Path(watch_arg)
         else:
             # Try to recover the scan root saved by the last full build
-            saved = Path(_GRAPHIFY_OUT) / ".graphify_root"
+            saved = graphify_out_dir() / ".graphify_root"
             if saved.exists():
                 watch_path = Path(saved.read_text(encoding="utf-8").strip())
             else:
@@ -3378,7 +3376,7 @@ def main() -> None:
         # showing top-K outbound edges per symbol.
         from typing import Optional as _Opt
         from graphify.tree_html import write_tree_html, DEFAULT_MAX_CHILDREN
-        graph_path = Path(_GRAPHIFY_OUT) / "graph.json"
+        graph_path = graphify_out_dir() / "graph.json"
         output_path: "_Opt[Path]" = None
         root: "_Opt[str]" = None
         max_children = DEFAULT_MAX_CHILDREN
@@ -3485,7 +3483,7 @@ def main() -> None:
         # graphify merge-graphs graph1.json graph2.json ... --out merged.json
         args = sys.argv[2:]
         graph_paths: list[Path] = []
-        out_path = Path(_GRAPHIFY_OUT) / "merged-graph.json"
+        out_path = graphify_out_dir() / "merged-graph.json"
         i = 0
         while i < len(args):
             if args[i] == "--out" and i + 1 < len(args):
@@ -3576,11 +3574,11 @@ def main() -> None:
 
         # Parse shared args
         args = sys.argv[3:]
-        graph_path = Path(_GRAPHIFY_OUT) / "graph.json"
+        graph_path = graphify_out_dir() / "graph.json"
         graph_path_explicit = False
-        labels_path = Path(_GRAPHIFY_OUT) / ".graphify_labels.json"
+        labels_path = graphify_out_dir() / ".graphify_labels.json"
         labels_path_explicit = False
-        report_path = Path(_GRAPHIFY_OUT) / "GRAPH_REPORT.md"
+        report_path = graphify_out_dir() / "GRAPH_REPORT.md"
         report_path_explicit = False
         sections_path: Path | None = None
         callflow_output: Path | None = None
@@ -3589,10 +3587,10 @@ def main() -> None:
         callflow_diagram_scale = 1.0
         callflow_max_diagram_nodes = 18
         callflow_max_diagram_edges = 24
-        analysis_path = Path(_GRAPHIFY_OUT) / ".graphify_analysis.json"
+        analysis_path = graphify_out_dir() / ".graphify_analysis.json"
         node_limit = 5000
         no_viz = False
-        obsidian_dir = Path(_GRAPHIFY_OUT) / "obsidian"
+        obsidian_dir = graphify_out_dir() / "obsidian"
         # Shared push-connection settings for the graph-database sinks (neo4j,
         # falkordb), parsed from the generic --push/--user/--password flags below.
         push_uri: str | None = None
@@ -3667,7 +3665,7 @@ def main() -> None:
                 elif (candidate / "graph.json").exists():
                     graph_path = candidate / "graph.json"
                 else:
-                    graph_path = candidate / _GRAPHIFY_OUT / "graph.json"
+                    graph_path = graphify_out_dir(candidate) / "graph.json"
                 graph_path_explicit = True
                 i += 1
             else:
@@ -4098,11 +4096,9 @@ def main() -> None:
         if cli_max_workers is not None:
             os.environ["GRAPHIFY_MAX_WORKERS"] = str(cli_max_workers)
 
-        # Resolve output dir. The user-facing contract is "<out>/graphify-out/"
-        # so a fresh checkout writes graphify-out/ at the project root, matching
-        # the skill.md pipeline.
+        # Resolve output dir via GRAPHIFY_OUT (default graphify-out/ under out_root).
         out_root = (out_dir.resolve() if out_dir else target)
-        graphify_out = out_root / "graphify-out"
+        graphify_out = graphify_out_dir(out_root)
         graphify_out.mkdir(parents=True, exist_ok=True)
 
         from graphify.detect import (

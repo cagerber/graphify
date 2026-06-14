@@ -9,10 +9,7 @@ import re
 import tempfile
 from pathlib import Path
 
-# Output directory name — override with GRAPHIFY_OUT env var for worktrees or
-# shared-output setups. Accepts a relative name ("graphify-out-feature") or an
-# absolute path ("/shared/graphify-out").
-_GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+from graphify.paths import graphify_out_dir, graphify_out_rel
 
 # AST cache entries are the output of graphify's own extractor code, so they
 # are only valid for the version that wrote them: keying purely on file
@@ -94,8 +91,7 @@ _stat_index_dirty: bool = False
 
 
 def _stat_index_file(root: Path) -> Path:
-    _out = Path(_GRAPHIFY_OUT)
-    base = _out if _out.is_absolute() else Path(root).resolve() / _out
+    base = graphify_out_dir(root)
     return base / "cache" / "stat-index.json"
 
 
@@ -279,8 +275,7 @@ def cache_dir(root: Path = Path("."), kind: str = "ast") -> Path:
     contents. Semantic entries live unversioned in graphify-out/cache/semantic/
     (re-extraction costs LLM calls).
     """
-    _out = Path(_GRAPHIFY_OUT)
-    base = _out if _out.is_absolute() else Path(root).resolve() / _out
+    base = graphify_out_dir(root)
     d = base / "cache" / kind
     if kind == "ast":
         d = d / f"v{_EXTRACTOR_VERSION}"
@@ -378,7 +373,7 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
 
 def cached_files(root: Path = Path(".")) -> set[str]:
     """Return set of file hashes that have a valid cache entry (any kind)."""
-    base = Path(root).resolve() / _GRAPHIFY_OUT / "cache"
+    base = graphify_out_dir(root) / "cache"
     hashes: set[str] = set()
     # Legacy flat entries
     if base.is_dir():
@@ -393,7 +388,7 @@ def cached_files(root: Path = Path(".")) -> set[str]:
 
 def clear_cache(root: Path = Path(".")) -> None:
     """Delete all cache entries (ast/, semantic/, and legacy flat entries)."""
-    base = Path(root).resolve() / _GRAPHIFY_OUT / "cache"
+    base = graphify_out_dir(root) / "cache"
     # Legacy flat entries
     if base.is_dir():
         for f in base.glob("*.json"):

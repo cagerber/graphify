@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-_GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+from graphify.paths import graphify_out_dir, graphify_out_rel, skip_dir_names
 _PENDING_FILENAME = ".pending_changes"
 _PENDING_DRAIN_MAX_PASSES = 20
 
@@ -395,7 +395,7 @@ def _rebuild_code(
 
     Returns True on success, False on error or skipped-due-to-lock.
     """
-    out = watch_path / _GRAPHIFY_OUT
+    out = graphify_out_dir(watch_path)
     if acquire_lock:
         # #1059: incremental (changed_paths is not None) hooks must not drop
         # their change set when another rebuild is already running. Queue
@@ -780,7 +780,7 @@ def check_update(watch_path: Path) -> bool:
     re-extraction via `/graphify --update` — this function only signals
     that the update is needed.
     """
-    flag = Path(watch_path) / _GRAPHIFY_OUT / "needs_update"
+    flag = graphify_out_dir(watch_path) / "needs_update"
     if flag.exists():
         print(f"[graphify check-update] Pending non-code changes in {watch_path}.")
         print("[graphify check-update] Run `/graphify --update` to apply semantic re-extraction.")
@@ -789,7 +789,7 @@ def check_update(watch_path: Path) -> bool:
 
 def _notify_only(watch_path: Path) -> None:
     """Write a flag file and print a notification (fallback for non-code-only corpora)."""
-    flag = watch_path / _GRAPHIFY_OUT / "needs_update"
+    flag = graphify_out_dir(watch_path) / "needs_update"
     flag.parent.mkdir(parents=True, exist_ok=True)
     flag.write_text("1", encoding="utf-8")
     print(f"\n[graphify watch] New or changed files detected in {watch_path}")
@@ -854,7 +854,7 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
                 filter_parts = path.parts
             if any(part.startswith(".") for part in filter_parts):
                 return
-            if _GRAPHIFY_OUT in filter_parts:
+            if skip_dir_names() & set(filter_parts):
                 return
             last_trigger = time.monotonic()
             pending = True
