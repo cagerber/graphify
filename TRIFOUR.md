@@ -21,7 +21,7 @@ Pin in ODS `pyproject.toml`:
 dev = ["graphifyy", ...]
 
 [tool.uv.sources]
-graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "7b9b757" }
+graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "2ea354c" }
 ```
 
 Set `GRAPHIFY_OUT=.local/graphify-out` in ODS `.env`; run via `dev/graphify` → `uv run graphify`.
