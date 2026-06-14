@@ -2,6 +2,18 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.39+trifour.6`
+
+- **Subpath `update`** — relative ``GRAPHIFY_OUT`` resolves from the **project cwd** (``graphify_out_for_watch``), not the watch subdirectory, so ``graphify update reference/`` writes to ``<repo>/.local/graphify-out``.
+- **Legacy ``.refcsp`` encoding** — ODS ``extract_csp`` decodes UTF-8 first, then **cp1252** (Windows/Studio export); documented in ``shared.kg_extract.extract_csp``.
+
+## Changes in `0.8.39+trifour.5`
+
+- **Consumer extractors** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; ``graphify.trifour.extract.registry`` routes matching paths before built-in suffix dispatch (ODS: ``src/BI/**/*.cls`` → ``extract_bi_cls``).
+- **`graphify.trifour.extract.ods`** — thin plugins delegating to ``shared.kg_extract`` (``extract_bi_cls``, ``extract_dfi``; ``tools/`` on ``sys.path``).
+- **Consumer extractor cache** — paths matched by ``[[tool.graphify.extractors]]`` bypass the AST file cache so routing changes (e.g. Apex → BI semantic) cannot serve stale entries.
+- **``.dfi`` corpus scan** — ``*.DFI`` files are included in ``CODE_EXTENSIONS`` (ODS BI pivot/dashboard artefacts).
+
 ## Changes in `0.8.39+trifour.4`
 
 - **Git hooks** — `post-commit` / `post-checkout` honour **`GRAPHIFY_OUT`** (no hardcoded `graphify-out/` skip paths or `.graphify_root` reads).
@@ -74,5 +86,5 @@ Set `GRAPHIFY_OUT=.local/graphify-out` in `.env`; run via `dev/graphify` → `uv
 
 ## Not yet in this fork
 
-- ObjectScript tree-sitter / regex extractor (`.cls` still mapped to Apex upstream).
+- ObjectScript BI extractor for ``src/BI/**/*.cls`` via consumer ``[[tool.graphify.extractors]]`` and ``shared.kg_extract`` (SSOT in ODS ``tools/shared/kg_extract/``).
 - OpenRouter as a built-in provider (use `~/.graphify/providers.json` upstream).

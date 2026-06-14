@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from graphify.paths import graphify_out_dir, graphify_out_rel, skip_dir_names
+from graphify.paths import graphify_out_dir, graphify_out_for_watch, graphify_out_rel, skip_dir_names
 _PENDING_FILENAME = ".pending_changes"
 _PENDING_DRAIN_MAX_PASSES = 20
 
@@ -395,7 +395,7 @@ def _rebuild_code(
 
     Returns True on success, False on error or skipped-due-to-lock.
     """
-    out = graphify_out_dir(watch_path)
+    out = graphify_out_for_watch(watch_path)
     if acquire_lock:
         # #1059: incremental (changed_paths is not None) hooks must not drop
         # their change set when another rebuild is already running. Queue
@@ -501,6 +501,14 @@ def _rebuild_code(
             "nodes": [], "edges": [], "hyperedges": [],
             "input_tokens": 0, "output_tokens": 0,
         }
+
+        from graphify.trifour.extract.post import merge_consumer_kg_extensions
+
+        result = merge_consumer_kg_extensions(
+            result,
+            project_root=project_root,
+            full_rebuild=changed_paths is None,
+        )
 
         # Preserve semantic nodes/edges from a previous full run.
         # AST-only rebuild replaces nodes for changed files; everything else is kept.
@@ -791,7 +799,7 @@ def check_update(watch_path: Path) -> bool:
     re-extraction via `/graphify --update` — this function only signals
     that the update is needed.
     """
-    flag = graphify_out_dir(watch_path) / "needs_update"
+    flag = graphify_out_for_watch(watch_path) / "needs_update"
     if flag.exists():
         print(f"[graphify check-update] Pending non-code changes in {watch_path}.")
         print("[graphify check-update] Run `/graphify --update` to apply semantic re-extraction.")
@@ -800,7 +808,7 @@ def check_update(watch_path: Path) -> bool:
 
 def _notify_only(watch_path: Path) -> None:
     """Write a flag file and print a notification (fallback for non-code-only corpora)."""
-    flag = graphify_out_dir(watch_path) / "needs_update"
+    flag = graphify_out_for_watch(watch_path) / "needs_update"
     flag.parent.mkdir(parents=True, exist_ok=True)
     flag.write_text("1", encoding="utf-8")
     print(f"\n[graphify watch] New or changed files detected in {watch_path}")

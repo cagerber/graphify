@@ -17,7 +17,7 @@ try:
 except Exception:
     __version__ = "unknown"
 
-from graphify.paths import graphify_out_dir, default_graph_json_path
+from graphify.paths import graphify_out_dir, graphify_out_for_watch, default_graph_json_path
 
 
 @functools.lru_cache(maxsize=None)
@@ -3165,7 +3165,7 @@ def main() -> None:
                 i_arg += 1
             else:
                 i_arg += 1
-        out = graphify_out_dir(watch_path)
+        out = graphify_out_for_watch(watch_path)
         apply_heuristic_labels(
             out,
             project_root=watch_path,
@@ -3202,7 +3202,7 @@ def main() -> None:
         )
         folder_links = not only_pytest
         pytest_enrich = not only_folder
-        out = graphify_out_dir(watch_path)
+        out = graphify_out_for_watch(watch_path)
         counts = apply_enrich(
             out,
             watch_path.resolve(),
@@ -3230,7 +3230,7 @@ def main() -> None:
                 i_arg += 1
             else:
                 i_arg += 1
-        out = graphify_out_dir(watch_path)
+        out = graphify_out_for_watch(watch_path)
         if "--test-files-only" in sys.argv:
             ok = emit_test_files_html(out, output_path=output_path)
         else:
@@ -3290,7 +3290,7 @@ def main() -> None:
                 i_arg += 1
         if watch_path is None:
             watch_path = Path(".")
-        graph_json = graph_override if graph_override is not None else graphify_out_dir(watch_path) / "graph.json"
+        graph_json = graph_override if graph_override is not None else graphify_out_for_watch(watch_path) / "graph.json"
         if not graph_json.exists():
             print(
                 f"error: no graph found at {graph_json} — run /graphify first",
@@ -3349,7 +3349,7 @@ def main() -> None:
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
-        out = graphify_out_dir(watch_path)
+        out = graphify_out_for_watch(watch_path)
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
         if labels_path.exists() and not force_relabel:

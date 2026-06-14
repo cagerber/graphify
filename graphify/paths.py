@@ -27,6 +27,25 @@ def graphify_out_dir(root: Path | str | None = None) -> Path:
     return base / rel
 
 
+def graphify_project_root(watch_path: Path | str | None = None) -> Path:
+    """Repository root for resolving relative ``GRAPHIFY_OUT`` during subpath scans.
+
+    When ``graphify update reference/`` runs from the repo root, output must land
+    in ``<repo>/.local/graphify-out``, not ``reference/.local/graphify-out``.
+  """
+    if watch_path is None:
+        return Path.cwd().resolve()
+    wp = Path(watch_path)
+    if wp.is_absolute():
+        return wp.resolve()
+    return Path.cwd().resolve()
+
+
+def graphify_out_for_watch(watch_path: Path | str | None = None) -> Path:
+    """``GRAPHIFY_OUT`` anchored at :func:`graphify_project_root`, not the watch subfolder."""
+    return graphify_out_dir(graphify_project_root(watch_path))
+
+
 def manifest_path(root: Path | str | None = None) -> str:
     return str(graphify_out_dir(root) / "manifest.json")
 
