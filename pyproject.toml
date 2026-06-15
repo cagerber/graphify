@@ -103,8 +103,12 @@ dev = [
 # Run without installing: uvx graphifyy install
 package = true
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["graphify*"]
+exclude = ["graphify-benchmark*", "graphify_eval*", "graphify_test*", "tests*"]
+
 [tool.setuptools]
-packages = ["graphify"]
 include-package-data = false
 
 [tool.setuptools.package-data]
