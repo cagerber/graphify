@@ -43,6 +43,18 @@ def extract_dfi(path: Path) -> dict[str, Any]:
     return extract_dfi_path(path)
 
 
+def extract_objectscript_ast(path: Path) -> dict[str, Any]:
+    """
+    Graphify entry point for ObjectScript AST (``.cls``, ``.refcls`` reference mirrors, routines).
+
+    Fail fast: propagates errors from ``shared.objectscript_ast`` (no Apex fallback).
+    """
+    _ensure_consumer_tools_on_path()
+    from shared.objectscript_ast.extract import extract_objectscript_path
+
+    return extract_objectscript_path(path)
+
+
 def extract_csp(path: Path) -> dict[str, Any]:
     """
     Graphify entry point for ``reference/source_entities/**/*.refcsp``.

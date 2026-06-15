@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphify.extract import _bypass_ast_cache
-from graphify.trifour.extract.registry import resolve_consumer_extractor
+from graphify.extract import _bypass_ast_cache, _get_extractors, _merge_extraction_results
+from graphify.trifour.extract.registry import (
+    resolve_consumer_extractor,
+    resolve_consumer_extractors,
+)
 
 
 def test_bi_cls_uses_ods_extractor_not_apex(tmp_path, monkeypatch):
@@ -129,3 +132,58 @@ path_glob = "reference/source_entities/**"
     fn = resolve_consumer_extractor(csp, project_root=root)
     assert fn is not None
     assert fn.__name__ == "extract_csp"
+
+
+def test_bi_cls_resolves_multiple_consumer_extractors(tmp_path, monkeypatch):
+    """``src/BI/**/*.cls`` may register both AST and BI extractors."""
+    root = tmp_path
+    bi = root / "src" / "BI" / "Dimensions"
+    bi.mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+[[tool.graphify.extractors]]
+module = "graphify.trifour.extract.ods"
+function = "extract_objectscript_ast"
+extensions = [".cls"]
+path_glob = "src/**"
+[[tool.graphify.extractors]]
+module = "graphify.trifour.extract.ods"
+function = "extract_bi_cls"
+extensions = [".cls"]
+path_glob = "src/BI/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    cls = bi / "Sample.cls"
+    cls.write_text("Class BI.Dimensions.Sample Extends %RegisteredObject\n{\n}\n")
+    monkeypatch.chdir(root)
+    fns = resolve_consumer_extractors(cls, project_root=root)
+    names = [fn.__name__ for fn in fns]
+    assert names == ["extract_objectscript_ast", "extract_bi_cls"]
+
+
+def test_merge_extraction_results_concatenates_nodes() -> None:
+    merged = _merge_extraction_results(
+        [
+            {"nodes": [{"id": "a"}], "edges": []},
+            {"nodes": [{"id": "b"}], "edges": [{"source": "a", "target": "b"}]},
+        ]
+    )
+    assert len(merged["nodes"]) == 2
+    assert len(merged["edges"]) == 1
+
+
+def test_cls_builtin_dispatch_is_objectscript_not_apex() -> None:
+    from graphify.extract import _DISPATCH, extract_objectscript
+
+    assert _DISPATCH[".cls"] is extract_objectscript
+    assert _DISPATCH[".refcls"] is extract_objectscript
+
+
+def test_objectscript_extensions_in_code_extensions() -> None:
+    from graphify.detect import CODE_EXTENSIONS
+
+    for ext in (".mac", ".int", ".os", ".rtn", ".refcls"):
+        assert ext in CODE_EXTENSIONS

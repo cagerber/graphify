@@ -134,6 +134,28 @@ def _refresh_all_version_stamps() -> None:
             vf.write_text(__version__, encoding="utf-8")
 
 
+def _skill_version_check_targets() -> set[Path]:
+    """Skill install paths to compare against the running package version.
+
+    When ``GRAPHIFY_OUT`` is set (Trifour ODS ``dev/graphify`` always exports it),
+    only check the **project** ``.agents/skills/graphify`` stamp. Global IDE skills
+    (e.g. ``~/.claude/skills/graphify`` from an old ``uv tool install``) are
+    unrelated to the pinned fork workflow and must not warn on every ``update``.
+    """
+    if os.environ.get("GRAPHIFY_OUT", "").strip():
+        project_skill = Path(".agents/skills/graphify/SKILL.md")
+        vf = project_skill.parent / ".graphify_version"
+        try:
+            if vf.exists():
+                return {project_skill}
+            # ODS / Trifour: project skill is installed by dev/graphify — do not warn on
+            # unrelated global IDE skills (~/.claude, ~/.hermes) when the stamp is absent.
+            return set()
+        except OSError:
+            return set()
+    return {_platform_skill_destination(name) for name in _PLATFORM_CONFIG}
+
+
 def _platform_skill_destination(platform_name: str, *, project: bool = False, project_dir: Path | None = None) -> Path:
     """Return the skill destination for a platform and scope."""
     if platform_name == "gemini":
@@ -2101,7 +2123,7 @@ def main() -> None:
         # Resolve each platform's real user-scope destination so per-platform
         # overrides (gemini, opencode, devin, antigravity, amp) check the dir
         # they actually install into, not the bare cfg['skill_dst'].
-        for skill_dst in {_platform_skill_destination(name) for name in _PLATFORM_CONFIG}:
+        for skill_dst in _skill_version_check_targets():
             _check_skill_version(skill_dst)
 
     if len(sys.argv) >= 2 and sys.argv[1] in ("-v", "--version", "version"):

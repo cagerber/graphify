@@ -104,6 +104,35 @@ _JS_RESOLVE_EXTS = (".ts", ".tsx", ".svelte", ".js", ".jsx", ".mjs")
 _JS_INDEX_FILES = ("index.ts", "index.tsx", "index.svelte", "index.js", "index.jsx", "index.mjs")
 
 
+def _bypass_ast_cache(path: Path) -> bool:
+    """Skip AST cache when built-in rules require it or a consumer extractor owns the path."""
+    if path.suffix in _JS_CACHE_BYPASS_SUFFIXES:
+        return True
+    try:
+        from graphify.trifour.extract.registry import resolve_consumer_extractors
+
+        return bool(resolve_consumer_extractors(path))
+    except ImportError:
+        return False
+
+
+def _merge_extraction_results(results: list[dict]) -> dict:
+    """Merge nodes/edges from multiple extractors; concatenate errors."""
+    merged: dict = {"nodes": [], "edges": []}
+    errors: list[str] = []
+    for result in results:
+        if not result:
+            continue
+        merged["nodes"].extend(result.get("nodes") or [])
+        merged["edges"].extend(result.get("edges") or [])
+        err = result.get("error")
+        if err:
+            errors.append(str(err))
+    if errors:
+        merged["error"] = "; ".join(errors)
+    return merged
+
+
 SEMANTIC_RELATIONS = frozenset({
     "inherits", "implements", "mixes_in", "embeds", "references",
     "calls", "imports", "imports_from", "re_exports", "contains", "method",
@@ -4052,6 +4081,20 @@ def extract_ruby(path: Path) -> dict:
 def extract_csharp(path: Path) -> dict:
     """Extract classes, interfaces, methods, namespaces, and usings from a .cs file."""
     return _extract_generic(path, _CSHARP_CONFIG)
+
+
+def extract_objectscript(path: Path) -> dict:
+    """Extract ObjectScript class/routine structure via Trifour ``shared.objectscript_ast``."""
+    try:
+        from graphify.trifour.extract.ods import extract_objectscript_ast
+
+        return extract_objectscript_ast(path)
+    except ImportError:
+        return {
+            "nodes": [],
+            "edges": [],
+            "error": "objectscript extractor unavailable (graphify.trifour not installed)",
+        }
 
 
 def extract_apex(path: Path) -> dict:
@@ -11483,21 +11526,38 @@ _DISPATCH: dict[str, Any] = {
     ".vbproj": extract_csproj,
     ".razor": extract_razor,
     ".cshtml": extract_razor,
-    ".cls": extract_apex,
+    ".cls": extract_objectscript,
+    ".refcls": extract_objectscript,
     ".trigger": extract_apex,
+    ".mac": extract_objectscript,
+    ".int": extract_objectscript,
+    ".os": extract_objectscript,
+    ".rtn": extract_objectscript,
 }
 
 
-def _get_extractor(path: Path) -> Any | None:
-    """Return the correct extractor function for a file, or None if unsupported."""
+def _get_extractors(path: Path) -> list[Any]:
+    """Return all extractors for *path* (consumer rules, then built-in dispatch)."""
     if path.name.endswith(".blade.php"):
-        return extract_blade
-    # MCP config files (.mcp.json, claude_desktop_config.json, ...) are routed
-    # by filename before generic .json dispatch so they get MCP-aware nodes
-    # (servers, commands, packages, env vars) instead of opaque JSON keys.
+        return [extract_blade]
     if is_mcp_config_path(path):
-        return extract_mcp_config
-    return _DISPATCH.get(path.suffix)
+        return [extract_mcp_config]
+    try:
+        from graphify.trifour.extract.registry import resolve_consumer_extractors
+
+        consumers = resolve_consumer_extractors(path)
+        if consumers:
+            return consumers
+    except ImportError:
+        pass
+    builtin = _DISPATCH.get(path.suffix)
+    return [builtin] if builtin is not None else []
+
+
+def _get_extractor(path: Path) -> Any | None:
+    """Return the primary extractor for *path* (first of :func:`_get_extractors`)."""
+    extractors = _get_extractors(path)
+    return extractors[0] if extractors else None
 
 
 def _extract_single_file(args: tuple) -> tuple[int, dict]:
@@ -11516,7 +11576,7 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     path = Path(path_str)
     cache_root = Path(cache_root_str)
     _raise_recursion_limit()
-    bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+    bypass_cache = _bypass_ast_cache(path)
 
     # Check cache first (avoid re-extraction)
     if not bypass_cache:
@@ -11528,7 +11588,12 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     if extractor is None:
         return idx, {"nodes": [], "edges": []}
 
-    result = _safe_extract(extractor, path)
+    extractors = _get_extractors(path)
+    if len(extractors) > 1:
+        results = [_safe_extract(fn, path) for fn in extractors]
+        result = _merge_extraction_results(results)
+    else:
+        result = _safe_extract(extractor, path)
     if not bypass_cache and "error" not in result:
         save_cached(path, result, cache_root)
     return idx, result
@@ -11650,7 +11715,7 @@ def _extract_sequential(
         if extractor is None:
             per_file[idx] = {"nodes": [], "edges": []}
             continue
-        bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+        bypass_cache = _bypass_ast_cache(path)
         result = _safe_extract(extractor, path)
         if not bypass_cache and "error" not in result:
             save_cached(path, result, effective_root)
@@ -11724,7 +11789,7 @@ def extract(
         if _get_extractor(path) is None:
             per_file[i] = {"nodes": [], "edges": []}
             continue
-        bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+        bypass_cache = _bypass_ast_cache(path)
         if not bypass_cache:
             cached = load_cached(path, effective_root)
             if cached is not None:

@@ -2,10 +2,17 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.39+trifour.7`
+
+- **ObjectScript AST extractor** — ``extract_objectscript_ast`` in ``graphify.trifour.extract.ods`` delegates to ODS ``shared.objectscript_ast``; built-in dispatch routes ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript`` (no Apex fallback).
+- **Consumer extractor registry** — ``extract_objectscript_ast`` registered for ODS ``[[tool.graphify.extractors]]`` patterns; cache bypass for consumer routes preserved.
+- **Skill version scope** — stale-skill warnings respect project-only skill paths when ``GRAPHIFY_OUT`` is set (tests in ``tests/test_skill_version_scope.py``).
+
 ## Changes in `0.8.39+trifour.6`
 
 - **Subpath `update`** — relative ``GRAPHIFY_OUT`` resolves from the **project cwd** (``graphify_out_for_watch``), not the watch subdirectory, so ``graphify update reference/`` writes to ``<repo>/.local/graphify-out``.
 - **Legacy ``.refcsp`` encoding** — ODS ``extract_csp`` decodes UTF-8 first, then **cp1252** (Windows/Studio export); documented in ``shared.kg_extract.extract_csp``.
+- **Skill version warnings** — when ``GRAPHIFY_OUT`` is set, stale-skill checks target **project** ``.agents/skills/graphify`` only (not global ``~/.claude`` / ``~/.hermes`` from old ``uv tool install``). ODS ``dev/graphify`` auto-runs ``install`` when the project stamp lags the package.
 
 ## Changes in `0.8.39+trifour.5`
 

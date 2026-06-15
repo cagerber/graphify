@@ -91,44 +91,9 @@ def heuristic_name(
     member_ids: list[str],
     cid: int,
 ) -> str:
-    prefix_counter: Counter[tuple[str, ...]] = Counter()
-    symbol_counter: Counter[str] = Counter()
+    from graphify.trifour.viz.labels import heuristic_name as _heuristic_name_v2
 
-    for nid in member_ids:
-        data = node_attrs.get(nid)
-        if not data:
-            continue
-        source_file = data.get("source_file") or ""
-        prefix = _path_prefix(source_file)
-        if prefix:
-            prefix_counter[prefix] += 1
-        label = (data.get("label") or "").strip()
-        if label and not _is_file_node_label(label):
-            symbol = label.rstrip("()").split(".")[-1]
-            if len(symbol) > 2 and symbol not in _BORING_SYMBOLS:
-                symbol_counter[symbol] += 1
-
-    member_count = len(member_ids)
-
-    if prefix_counter:
-        best_prefix, best_count = prefix_counter.most_common(1)[0]
-        if best_count >= max(2, int(member_count * 0.2)) or (
-            member_count <= 5 and best_count >= 1
-        ):
-            name = _format_prefix(best_prefix)
-            if symbol_counter and member_count <= 12:
-                top_sym = symbol_counter.most_common(1)[0][0]
-                name = f"{name} · {top_sym}"
-            return _truncate(name)
-
-    if symbol_counter:
-        top = [sym for sym, _ in symbol_counter.most_common(2)]
-        return _truncate(" · ".join(top))
-
-    if prefix_counter:
-        return _truncate(_format_prefix(prefix_counter.most_common(1)[0][0]))
-
-    return f"Community {cid}"
+    return _heuristic_name_v2(node_attrs, member_ids, cid)
 
 
 def dedupe_labels(labels: dict[int, str]) -> dict[int, str]:

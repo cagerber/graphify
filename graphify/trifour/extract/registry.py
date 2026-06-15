@@ -9,6 +9,11 @@ from typing import Any, Callable
 
 from graphify.config import ExtractorRule, load_graphify_config, match_glob
 
+__all__ = [
+    "resolve_consumer_extractor",
+    "resolve_consumer_extractors",
+]
+
 
 def _repo_relative(path: Path, project_root: Path) -> str | None:
     try:
@@ -33,6 +38,48 @@ def _load_callable(module: str, function: str) -> Callable[[Path], dict[str, Any
     return fn
 
 
+def _matching_extractor_rules(
+    path: Path,
+    *,
+    project_root: Path | None = None,
+) -> list[ExtractorRule]:
+    """Return all configured extractor rules matching *path* (in declaration order)."""
+    root = project_root or _find_project_root(path) or _find_project_root(Path.cwd())
+    if root is None:
+        return []
+
+    rel = _repo_relative(path, root)
+    if rel is None:
+        return []
+
+    cfg = load_graphify_config(root)
+    suffix = path.suffix.lower()
+    matched: list[ExtractorRule] = []
+    for rule in cfg.extractors:
+        if suffix not in rule.extensions:
+            continue
+        if rule.path_glob and not match_glob(rel, rule.path_glob):
+            continue
+        matched.append(rule)
+    return matched
+
+
+def resolve_consumer_extractors(
+    path: Path,
+    *,
+    project_root: Path | None = None,
+) -> list[Callable[[Path], dict[str, Any]]]:
+    """
+    Return every configured extractor matching *path* (multi-extractor merge).
+
+    Rules come from ``[[tool.graphify.extractors]]`` in the consumer ``pyproject.toml``.
+    """
+    return [
+        _load_callable(rule.module, rule.function)
+        for rule in _matching_extractor_rules(path, project_root=project_root)
+    ]
+
+
 def resolve_consumer_extractor(
     path: Path,
     *,
@@ -41,22 +88,7 @@ def resolve_consumer_extractor(
     """
     Return the first configured extractor matching *path*, or ``None``.
 
-    Rules come from ``[[tool.graphify.extractors]]`` in the consumer ``pyproject.toml``.
+    Prefer :func:`resolve_consumer_extractors` when multiple rules may apply.
     """
-    root = project_root or _find_project_root(path) or _find_project_root(Path.cwd())
-    if root is None:
-        return None
-
-    rel = _repo_relative(path, root)
-    if rel is None:
-        return None
-
-    cfg = load_graphify_config(root)
-    suffix = path.suffix.lower()
-    for rule in cfg.extractors:
-        if suffix not in rule.extensions:
-            continue
-        if rule.path_glob and not match_glob(rel, rule.path_glob):
-            continue
-        return _load_callable(rule.module, rule.function)
-    return None
+    extractors = resolve_consumer_extractors(path, project_root=project_root)
+    return extractors[0] if extractors else None

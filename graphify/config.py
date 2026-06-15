@@ -21,6 +21,16 @@ class TestsCoversRule:
 
 
 @dataclass
+class ExtractorRule:
+    """Consumer-registered file extractor (``[[tool.graphify.extractors]]``)."""
+
+    module: str
+    function: str
+    extensions: tuple[str, ...]
+    path_glob: str = ""
+
+
+@dataclass
 class GraphifyConfig:
     test_roots: list[str] = field(default_factory=lambda: ["tests"])
     tests_covers: list[TestsCoversRule] = field(default_factory=list)
@@ -29,6 +39,7 @@ class GraphifyConfig:
     folder_affinity: bool = True
     pytest_enrich: bool = True
     heuristic_labels: bool = False
+    extractors: list[ExtractorRule] = field(default_factory=list)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -102,6 +113,31 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
     except (TypeError, ValueError):
         folder_prefix_depth = 2
 
+    extractors: list[ExtractorRule] = []
+    for item in section.get("extractors", []):
+        if not isinstance(item, dict):
+            continue
+        module = str(item.get("module") or "").strip()
+        function = str(item.get("function") or "").strip()
+        if not module or not function:
+            continue
+        raw_ext = item.get("extensions", [])
+        if isinstance(raw_ext, str):
+            extensions = (raw_ext,)
+        else:
+            extensions = tuple(str(x).strip().lower() for x in raw_ext if str(x).strip())
+        if not extensions:
+            continue
+        path_glob = str(item.get("path_glob") or "").strip()
+        extractors.append(
+            ExtractorRule(
+                module=module,
+                function=function,
+                extensions=extensions,
+                path_glob=path_glob,
+            )
+        )
+
     return GraphifyConfig(
         test_roots=[str(r) for r in test_roots],
         tests_covers=rules,
@@ -110,6 +146,7 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
         folder_affinity=bool(section.get("folder_affinity", True)),
         pytest_enrich=bool(section.get("pytest_enrich", True)),
         heuristic_labels=bool(section.get("heuristic_labels", False)),
+        extractors=extractors,
     )
 
 

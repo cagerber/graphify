@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import json
-import os
-from collections import Counter, defaultdict
 from pathlib import Path
 
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from graphify.config import enrich_flags
-from graphify.enrich import community_folder_affinity
-from graphify.node_paths import is_file_hub_node, normalize_source_path
+from graphify.export import _viz_node_limit, to_html
+from graphify.trifour.viz.aggregate import build_aggregated_document, graph_from_document
+from graphify.trifour.viz.communities import communities_from_nodes
+from graphify.trifour.viz.load import load_document
+from graphify.trifour.viz.test_hubs import build_test_file_hub_graph
+
+__all__ = [
+    "communities_from_nodes",
+    "build_test_file_hub_graph",
+    "write_aggregated_html",
+    "emit_default_html",
+    "emit_test_files_html",
+]
 
 
 def _load_labels(out: Path) -> dict[int, str] | None:
@@ -21,30 +29,6 @@ def _load_labels(out: Path) -> dict[int, str] | None:
         return None
     raw = json.loads(labels_path.read_text(encoding="utf-8"))
     return {int(k): str(v) for k, v in raw.items()}
-
-
-def communities_from_nodes(nodes: list[dict]) -> dict[int, list[str]]:
-    communities: dict[int, list[str]] = defaultdict(list)
-    for node in nodes:
-        cid = node.get("community")
-        node_id = node.get("id")
-        if cid is None or node_id is None:
-            continue
-        communities[int(cid)].append(str(node_id))
-    return dict(communities)
-
-
-def _structural_cross_pairs(
-    graph: nx.Graph,
-    node_to_community: dict[str, int],
-) -> set[tuple[int, int]]:
-    pairs: set[tuple[int, int]] = set()
-    for u, v in graph.edges():
-        cu, cv = node_to_community.get(u), node_to_community.get(v)
-        if cu is None or cv is None or cu == cv:
-            continue
-        pairs.add((min(cu, cv), max(cu, cv)))
-    return pairs
 
 
 def write_aggregated_html(
@@ -56,59 +40,23 @@ def write_aggregated_html(
     *,
     folder_affinity: bool = True,
 ) -> None:
-    from graphify.export import to_html
-
-    node_to_community = {
-        nid: cid for cid, members in communities.items() for nid in members
+    doc = load_document(html_path.parent / "graph.json")
+    agg = build_aggregated_document(
+        doc, labels=labels, folder_affinity=folder_affinity
+    )
+    meta_graph = graph_from_document(agg)
+    meta_communities = {int(str(n["community"])): [str(n["id"])] for n in agg["nodes"]}
+    member_counts = {
+        int(str(n["community"])): int(n.get("member_count") or 0) for n in agg["nodes"]
     }
-    meta = nx.Graph()
-    for cid, members in communities.items():
-        meta.add_node(
-            str(cid),
-            label=(labels or {}).get(cid, f"Community {cid}"),
-        )
 
-    edge_counts: Counter[tuple[int, int]] = Counter()
-    for u, v in graph.edges():
-        cu, cv = node_to_community.get(u), node_to_community.get(v)
-        if cu is not None and cv is not None and cu != cv:
-            edge_counts[(min(cu, cv), max(cu, cv))] += 1
-
-    structural_cross = set(edge_counts.keys())
-    for (cu, cv), weight in edge_counts.items():
-        meta.add_edge(
-            str(cu),
-            str(cv),
-            weight=weight,
-            relation=f"{weight} cross-community edges",
-            confidence="AGGREGATED",
-        )
-
-    if folder_affinity and enrich_flags().get("folder_affinity", True):
-        for cu, cv, relation, weight in community_folder_affinity(
-            nodes, structural_cross
-        ):
-            if meta.has_edge(str(cu), str(cv)):
-                continue
-            meta.add_edge(
-                str(cu),
-                str(cv),
-                weight=weight,
-                relation=relation,
-                confidence="INFERRED",
-            )
-
-    if meta.number_of_nodes() <= 1:
-        print("Single community; skipping aggregated HTML.")
-        return
-
-    meta_communities = {cid: [str(cid)] for cid in communities}
-    member_counts = {cid: len(members) for cid, members in communities.items()}
-
-    raw_hyperedges = graph.graph.get("hyperedges", [])
-    if raw_hyperedges:
+    hyperedges = doc["meta"].get("hyperedges")
+    if hyperedges:
+        node_to_community = {
+            nid: cid for cid, members in communities.items() for nid in members
+        }
         remapped = []
-        for he in raw_hyperedges:
+        for he in hyperedges:
             he_members = he.get("nodes") or he.get("members") or []
             comm_ids: list[str] = []
             seen: set[str] = set()
@@ -131,10 +79,14 @@ def write_aggregated_html(
                     "nodes": comm_ids,
                 }
             )
-        meta.graph["hyperedges"] = remapped
+        meta_graph.graph["hyperedges"] = remapped
+
+    if meta_graph.number_of_nodes() <= 1:
+        print("Single community; skipping aggregated HTML.")
+        return
 
     to_html(
-        meta,
+        meta_graph,
         meta_communities,
         str(html_path),
         community_labels=labels,
@@ -144,8 +96,6 @@ def write_aggregated_html(
 
 def emit_default_html(out_dir: Path, *, project_root: Path | None = None) -> bool:
     """Write graph.html (aggregated when over viz limit)."""
-    from graphify.export import _viz_node_limit, to_html
-
     graph_path = out_dir / "graph.json"
     html_path = out_dir / "graph.html"
     if not graph_path.is_file():
@@ -179,65 +129,6 @@ def emit_default_html(out_dir: Path, *, project_root: Path | None = None) -> boo
     return html_path.is_file()
 
 
-def build_test_file_hub_graph(
-    data: dict,
-    *,
-    test_roots: list[str] | None = None,
-) -> tuple[nx.Graph, dict[int, list[str]]]:
-    """Collapse to file hubs under configured test roots."""
-    roots = test_roots or ["tests"]
-    nodes = data.get("nodes", [])
-    hub_ids: set[str] = set()
-    hub_nodes: dict[str, dict] = {}
-
-    for node in nodes:
-        sf = normalize_source_path(node.get("source_file") or "")
-        if not sf:
-            continue
-        under_test = any(
-            sf == r.rstrip("/") or sf.startswith(r.rstrip("/") + "/") for r in roots
-        )
-        if not under_test:
-            continue
-        if node.get("kind") == "file" or is_file_hub_node(node):
-            nid = str(node.get("id"))
-            if nid:
-                hub_ids.add(nid)
-                hub_nodes[nid] = node
-
-    allowed_relations = {
-        "tests_covers",
-        "imports",
-        "imports_from",
-        "same_directory",
-        "shared_folder",
-        "calls",
-        "contains",
-    }
-    edges = data.get("links") or data.get("edges") or []
-
-    graph = nx.Graph()
-    for nid, node in hub_nodes.items():
-        graph.add_node(nid, **{k: v for k, v in node.items() if k != "id"})
-
-    for edge in edges:
-        rel = edge.get("relation", "")
-        if rel not in allowed_relations and edge.get("confidence") != "INFERRED":
-            if not rel.startswith("same_") and rel != "shared_folder":
-                continue
-        src, tgt = edge.get("source"), edge.get("target")
-        if src in hub_ids and tgt in hub_ids:
-            graph.add_edge(
-                src,
-                tgt,
-                relation=rel,
-                confidence=edge.get("confidence", "EXTRACTED"),
-            )
-
-    communities = communities_from_nodes(list(hub_nodes.values()))
-    return graph, communities
-
-
 def emit_test_files_html(
     out_dir: Path,
     output_path: Path | None = None,
@@ -245,7 +136,6 @@ def emit_test_files_html(
     test_roots: list[str] | None = None,
 ) -> bool:
     from graphify.config import load_graphify_config
-    from graphify.export import to_html
 
     graph_path = out_dir / "graph.json"
     if not graph_path.is_file():
