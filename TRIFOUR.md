@@ -1,31 +1,33 @@
 # Trifour fork delta (graphifyy)
 
+**Public repo.** Changelog here is **package-level only** — no private consumer runbooks or application paths. Consumer integration docs live in the consuming repo.
+
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
 ## Changes in `0.8.46+trifour.8`
 
-- **Upstream merge (5-208)** — merged `safishamsi/graphify` `v8` @ `0.8.46` (incremental update, manifest, query perf, #1423 `GRAPHIFY_OUT` centralization).
-- **Call-time `GRAPHIFY_OUT`** — Trifour `graphify.paths` keeps call-time resolution via PEP 562 lazy exports; upstream path helpers adapted, not replaced.
+- **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.8.46` (incremental update, manifest, query perf, #1423 `GRAPHIFY_OUT` centralization).
+- **Call-time `GRAPHIFY_OUT`** — `graphify.paths` keeps call-time resolution via PEP 562 lazy exports; upstream path helpers adapted, not replaced.
 - **Package manifest extractor** — upstream `#1377` `extract_package_manifest` preserved alongside Trifour consumer extractors.
 
 ## Changes in `0.8.39+trifour.7`
 
-- **ObjectScript AST extractor** — ``extract_objectscript_ast`` in ``graphify.trifour.extract.ods`` delegates to ODS ``shared.objectscript_ast``; built-in dispatch routes ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript`` (no Apex fallback).
-- **Consumer extractor registry** — ``extract_objectscript_ast`` registered for ODS ``[[tool.graphify.extractors]]`` patterns; cache bypass for consumer routes preserved.
+- **ObjectScript AST extractor** — ``extract_objectscript_ast`` in ``graphify.trifour.extract.ods`` delegates to consumer ``objectscript_ast`` on ``sys.path``; built-in dispatch routes ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript``.
+- **Consumer extractor registry** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; cache bypass for consumer routes preserved.
 - **Skill version scope** — stale-skill warnings respect project-only skill paths when ``GRAPHIFY_OUT`` is set (tests in ``tests/test_skill_version_scope.py``).
 
 ## Changes in `0.8.39+trifour.6`
 
 - **Subpath `update`** — relative ``GRAPHIFY_OUT`` resolves from the **project cwd** (``graphify_out_for_watch``), not the watch subdirectory, so ``graphify update reference/`` writes to ``<repo>/.local/graphify-out``.
-- **Legacy ``.refcsp`` encoding** — ODS ``extract_csp`` decodes UTF-8 first, then **cp1252** (Windows/Studio export); documented in ``shared.kg_extract.extract_csp``.
-- **Skill version warnings** — when ``GRAPHIFY_OUT`` is set, stale-skill checks target **project** ``.agents/skills/graphify`` only (not global ``~/.claude`` / ``~/.hermes`` from old ``uv tool install``). ODS ``dev/graphify`` auto-runs ``install`` when the project stamp lags the package.
+- **Legacy ``.refcsp`` encoding** — consumer ``extract_csp`` hook decodes UTF-8 first, then **cp1252** (Windows/Studio export).
+- **Skill version warnings** — when ``GRAPHIFY_OUT`` is set, stale-skill checks target **project** ``.agents/skills/graphify`` only (not global install paths from ``uv tool install``).
 
 ## Changes in `0.8.39+trifour.5`
 
-- **Consumer extractors** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; ``graphify.trifour.extract.registry`` routes matching paths before built-in suffix dispatch (ODS: ``src/BI/**/*.cls`` → ``extract_bi_cls``).
-- **`graphify.trifour.extract.ods`** — thin plugins delegating to ``shared.kg_extract`` (``extract_bi_cls``, ``extract_dfi``; ``tools/`` on ``sys.path``).
-- **Consumer extractor cache** — paths matched by ``[[tool.graphify.extractors]]`` bypass the AST file cache so routing changes (e.g. Apex → BI semantic) cannot serve stale entries.
-- **``.dfi`` corpus scan** — ``*.DFI`` files are included in ``CODE_EXTENSIONS`` (ODS BI pivot/dashboard artefacts).
+- **Consumer extractors** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; ``graphify.trifour.extract.registry`` routes matching paths before built-in suffix dispatch.
+- **`graphify.trifour.extract.ods`** — thin plugins delegating to consumer modules on ``sys.path`` (``tools/`` layout).
+- **Consumer extractor cache** — paths matched by ``[[tool.graphify.extractors]]`` bypass the AST file cache so routing changes cannot serve stale entries.
+- **``.dfi`` corpus scan** — ``*.DFI`` files included in ``CODE_EXTENSIONS``.
 
 ## Changes in `0.8.39+trifour.4`
 
@@ -62,14 +64,14 @@ folder_prefix_depth = 2
 folder_edges = true
 folder_affinity = true
 pytest_enrich = true
-heuristic_labels = true   # ODS / iris_connect: on by default in pyproject
+heuristic_labels = true
 
 [[tool.graphify.tests_covers]]
 test = "tests/**/test_*.py"
 strip_prefix = "tests/"
 strip_test_filename_prefix = "test_"
 
-# ODS layout example (tools/<tool>/tests/ → tools/<tool>/):
+# Monorepo layout (tools/<pkg>/tests/ → tools/<pkg>/):
 # [[tool.graphify.tests_covers]]
 # test = "tools/**/tests/test_*.py"
 # strip_prefix = ""
@@ -88,16 +90,15 @@ strip_test_filename_prefix = "test_"
 
 **Deprecated CLI aliases (remove from `dev/graphify` when on trifour.4+):** `label-communities`, `folder-edges` — use `label --heuristic` and `enrich --folder-links` directly.
 
-## ODS / iris_connect consumption
+## Consumer git pin
 
 ```toml
 [tool.uv.sources]
 graphifyy = { git = "https://github.com/cagerber/graphify.git", rev = "<pin-after-release>" }
 ```
 
-Set `GRAPHIFY_OUT=.local/graphify-out` in `.env`; run via `dev/graphify` → `uv run graphify`.
+Set `GRAPHIFY_OUT` in the environment (e.g. `.local/graphify-out`); run via `uv run graphify`.
 
 ## Not yet in this fork
 
-- ObjectScript BI extractor for ``src/BI/**/*.cls`` via consumer ``[[tool.graphify.extractors]]`` and ``shared.kg_extract`` (SSOT in ODS ``tools/shared/kg_extract/``).
 - OpenRouter as a built-in provider (use `~/.graphify/providers.json` upstream).
