@@ -2,6 +2,12 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.8.46+trifour.8`
+
+- **Upstream merge (5-208)** — merged `safishamsi/graphify` `v8` @ `0.8.46` (incremental update, manifest, query perf, #1423 `GRAPHIFY_OUT` centralization).
+- **Call-time `GRAPHIFY_OUT`** — Trifour `graphify.paths` keeps call-time resolution via PEP 562 lazy exports; upstream path helpers adapted, not replaced.
+- **Package manifest extractor** — upstream `#1377` `extract_package_manifest` preserved alongside Trifour consumer extractors.
+
 ## Changes in `0.8.39+trifour.7`
 
 - **ObjectScript AST extractor** — ``extract_objectscript_ast`` in ``graphify.trifour.extract.ods`` delegates to ODS ``shared.objectscript_ast``; built-in dispatch routes ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript`` (no Apex fallback).
