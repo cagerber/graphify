@@ -4,6 +4,12 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.9.12+trifour.1`
+
+- **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.9.12` (`9c27a52`; 248 commits past `ad6cb75`).
+- **Architecture** — upstream `extractors/` / `exporters/` / `cli.py` refactor integrated; Trifour deltas preserved.
+- **Trifour preserved** — `graphify.trifour.*`, consumer extractors via `resolve_consumer_extractors`, call-time `GRAPHIFY_OUT`, `viz_contract`, `enrich` / `label --heuristic` / `viz` CLI, skill version scope when `GRAPHIFY_OUT` set.
+
 ## Changes in `0.8.46+trifour.8`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.8.46` (incremental update, manifest, query perf, #1423 `GRAPHIFY_OUT` centralization).
