@@ -153,6 +153,23 @@ def _raise_recursion_limit() -> None:
         sys.setrecursionlimit(_RECURSION_LIMIT)
 
 
+def _merge_extraction_results(results: list[dict]) -> dict:
+    """Merge nodes/edges from multiple extractors; concatenate errors."""
+    merged: dict = {"nodes": [], "edges": []}
+    errors: list[str] = []
+    for result in results:
+        if not result:
+            continue
+        merged["nodes"].extend(result.get("nodes") or [])
+        merged["edges"].extend(result.get("edges") or [])
+        err = result.get("error")
+        if err:
+            errors.append(str(err))
+    if errors:
+        merged["error"] = "; ".join(errors)
+    return merged
+
+
 def _safe_extract(extractor: Callable, path: Path) -> dict:
     try:
         return extractor(path)
@@ -3646,6 +3663,20 @@ def extract_xaml(path: Path) -> dict:
 # block defined in the corpus (count.index, each.key, self.*, path.module, ...).
 
 
+def extract_objectscript(path: Path) -> dict:
+    """Extract ObjectScript class/routine structure via Trifour consumer AST."""
+    try:
+        from graphify.trifour.extract.ods import extract_objectscript_ast
+
+        return extract_objectscript_ast(path)
+    except ImportError:
+        return {
+            "nodes": [],
+            "edges": [],
+            "error": "objectscript extractor unavailable (graphify.trifour not installed)",
+        }
+
+
 _DISPATCH: dict[str, Any] = {
     ".py": extract_python,
     ".js": extract_js,
@@ -3737,8 +3768,13 @@ _DISPATCH: dict[str, Any] = {
     ".xaml": extract_xaml,
     ".razor": extract_razor,
     ".cshtml": extract_razor,
-    ".cls": extract_apex,
+    ".cls": extract_objectscript,
+    ".refcls": extract_objectscript,
     ".trigger": extract_apex,
+    ".mac": extract_objectscript,
+    ".int": extract_objectscript,
+    ".os": extract_objectscript,
+    ".rtn": extract_objectscript,
 }
 
 
@@ -3851,8 +3887,28 @@ def _bypass_ast_cache(path: Path) -> bool:
         return False
 
 
+def _get_extractors(path: Path) -> list[Any]:
+    """Return all extractors for *path* (consumer rules, then built-in dispatch)."""
+    if path.name.lower().endswith(".blade.php"):
+        return [extract_blade]
+    if is_mcp_config_path(path):
+        return [extract_mcp_config]
+    if is_package_manifest_path(path):
+        return [extract_package_manifest]
+    try:
+        from graphify.trifour.extract.registry import resolve_consumer_extractors
+
+        consumers = resolve_consumer_extractors(path)
+        if consumers:
+            return consumers
+    except ImportError:
+        pass
+    builtin = _get_extractor(path)
+    return [builtin] if builtin is not None else []
+
+
 def _get_extractor(path: Path) -> Any | None:
-    """Return the correct extractor function for a file, or None if unsupported."""
+    """Return the built-in extractor for *path*, or None if unsupported."""
     if path.name.lower().endswith(".blade.php"):
         return extract_blade
     # MCP config files (.mcp.json, claude_desktop_config.json, ...) are routed
@@ -3865,14 +3921,6 @@ def _get_extractor(path: Path) -> Any | None:
     # (#1377). apm.yml would otherwise be a .yml document handled by the LLM.
     if is_package_manifest_path(path):
         return extract_package_manifest
-    try:
-        from graphify.trifour.extract.registry import resolve_consumer_extractors
-
-        consumers = resolve_consumer_extractors(path)
-        if consumers:
-            return consumers[0]
-    except ImportError:
-        pass
     # `.h` is C/C++/ObjC-ambiguous; route Objective-C headers to extract_objc
     # (the suffix map sends `.h` to extract_c, which can't read @interface etc.).
     # ObjC sniffing has priority over the C++ sniff: an Objective-C++ header can
@@ -3943,7 +3991,12 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     if extractor is None:
         return idx, {"nodes": [], "edges": []}
 
-    result = _safe_extract_with_xaml_root(extractor, path, cache_root)
+    extractors = _get_extractors(path)
+    if len(extractors) > 1:
+        results = [_safe_extract_with_xaml_root(fn, path, cache_root) for fn in extractors]
+        result = _merge_extraction_results(results)
+    else:
+        result = _safe_extract_with_xaml_root(extractor, path, cache_root)
     # Never cache a zero-node result for an extractable file. Every supported
     # source produces at least a file node, so an empty node list is anomalous
     # (e.g. a transient batch/parallel hiccup). Caching it makes the empty

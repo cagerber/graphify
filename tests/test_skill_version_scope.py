@@ -14,7 +14,7 @@ def test_skill_version_check_targets_global_without_graphify_out(
     monkeypatch.chdir(tmp_path)
     targets = mainmod._skill_version_check_targets()
     assert len(targets) > 1
-    assert not any(".agents/skills/graphify" in str(p) for p in targets)
+    assert not any(str(p).startswith(str(tmp_path)) for p in targets)
 
 
 def test_skill_version_check_targets_project_only_with_graphify_out(
