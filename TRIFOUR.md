@@ -4,6 +4,10 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.9.37+trifour.3`
+
+- **viz_layers** — import ``_viz_node_limit`` / ``to_html`` from ``graphify.exporters.html`` after upstream exporters split.
+
 ## Changes in `0.9.37+trifour.2`
 
 - **Consumer post-hook** — ``merge_consumer_kg_extensions`` no-ops on ``ImportError`` when ``shared.kg_extract`` is absent (non-ODS checkouts with a ``tools/`` tree).

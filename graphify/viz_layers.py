@@ -8,7 +8,7 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from graphify.export import _viz_node_limit, to_html
+from graphify.exporters.html import _viz_node_limit, to_html
 from graphify.trifour.viz.aggregate import build_aggregated_document, graph_from_document
 from graphify.trifour.viz.communities import communities_from_nodes
 from graphify.trifour.viz.load import load_document
