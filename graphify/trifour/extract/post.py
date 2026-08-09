@@ -39,10 +39,14 @@ def merge_consumer_kg_extensions(
     if not _ensure_consumer_tools_on_path(project_root):
         return result
 
-    from shared.kg_extract.emit_extended import (
-        build_extended_product_fragment,
-        strip_extended_artefacts_from_result,
-    )
+    try:
+        from shared.kg_extract.emit_extended import (
+            build_extended_product_fragment,
+            strip_extended_artefacts_from_result,
+        )
+    except ImportError:
+        # Non-ODS consumers may have a tools/ tree without this package.
+        return result
 
     strip_extended_artefacts_from_result(result)
     frag = build_extended_product_fragment(project_root)

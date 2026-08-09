@@ -4,6 +4,10 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.9.37+trifour.2`
+
+- **Consumer post-hook** — ``merge_consumer_kg_extensions`` no-ops on ``ImportError`` when ``shared.kg_extract`` is absent (non-ODS checkouts with a ``tools/`` tree).
+
 ## Changes in `0.9.37+trifour.1`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.9.37` (`09a34ad`; ~300 commits past `9c27a52` / `0.9.12`).
