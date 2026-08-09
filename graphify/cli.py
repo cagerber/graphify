@@ -944,7 +944,11 @@ def dispatch_command(cmd: str) -> None:
         if len(sys.argv) < 3:
             print("Usage: graphify query \"<question>\" [--dfs] [--context C] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _query_graph_text
+        from graphify.serve import (
+            _direct_callers_text,
+            _extract_callers_target,
+            _query_graph_text,
+        )
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
         from graphify import querylog
@@ -1039,15 +1043,22 @@ def dispatch_command(cmd: str) -> None:
             sys.exit(1)
         import time as _time
         _t0 = _time.perf_counter()
-        _mode = "dfs" if use_dfs else "bfs"
-        _result = _query_graph_text(
-            G,
-            question,
-            mode=_mode,
-            depth=2,
-            token_budget=budget,
-            context_filters=context_filters,
-        )
+        _callers_target = _extract_callers_target(question)
+        if _callers_target and not context_filters and not use_dfs:
+            # Direct "who calls X" → inbound call list (not community BFS).
+            # Explicit --context / --dfs keep the traversal path.
+            _result = _direct_callers_text(G, _callers_target)
+            _mode = "callers"
+        else:
+            _mode = "dfs" if use_dfs else "bfs"
+            _result = _query_graph_text(
+                G,
+                question,
+                mode=_mode,
+                depth=2,
+                token_budget=budget,
+                context_filters=context_filters,
+            )
         querylog.log_query(
             kind="query",
             question=question,
@@ -1561,6 +1572,58 @@ def dispatch_command(cmd: str) -> None:
             question=sys.argv[2],
             corpus=str(gp),
             nodes_returned=len(connections),
+        )
+        _touch_query_stamp(gp)
+
+    elif cmd == "callers":
+        if len(sys.argv) < 3:
+            print('Usage: graphify callers "<node>" [--graph path]', file=sys.stderr)
+            sys.exit(1)
+        from graphify.serve import _direct_callers_text
+        from networkx.readwrite import json_graph
+
+        label = sys.argv[2]
+        graph_path = _default_graph_path()
+        args = sys.argv[3:]
+        for i, a in enumerate(args):
+            if a == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            sys.exit(1)
+        _enforce_graph_size_cap_or_exit(gp)
+        _raw = json.loads(gp.read_text(encoding="utf-8"))
+        if "links" not in _raw and "edges" in _raw:
+            _raw = dict(_raw, links=_raw["edges"])
+        _raw = {**_raw, "directed": True}
+        # Preserve true call direction markers when present (#2309).
+        _raw = dict(
+            _raw,
+            links=[
+                {
+                    **link,
+                    "_src": link.get("_src", link.get("source")),
+                    "_tgt": link.get("_tgt", link.get("target")),
+                }
+                for link in _raw.get("links", [])
+            ],
+        )
+        try:
+            G = json_graph.node_link_graph(_raw, edges="links")
+        except TypeError:
+            G = json_graph.node_link_graph(_raw)
+        result = _direct_callers_text(G, label)
+        if result.startswith("Ambiguous:"):
+            print(result)
+            sys.exit(1)
+        print(result)
+        from graphify import querylog
+        querylog.log_query(
+            kind="callers",
+            question=label,
+            corpus=str(gp),
+            result=result,
         )
         _touch_query_stamp(gp)
 

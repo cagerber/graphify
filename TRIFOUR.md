@@ -4,6 +4,11 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.9.37+trifour.5`
+
+- **Slimmer default deps** — keep core tree-sitter grammars (python/js/ts/go/rust/java/c/cpp/bash/json); move less-common grammars to optional ``langs-extra`` (soft-fail when absent).
+- **``callers`` / ``who calls X``** — ``graphify callers "<symbol>"`` lists direct inbound call edges; ``graphify query "who calls X"`` routes to that mode instead of a truncated community BFS.
+
 ## Changes in `0.9.37+trifour.4`
 
 - **Consumer-neutral extractors** — removed built-in product-specific extractor module; consumers register callables via ``[[tool.graphify.extractors]]`` (``module`` / ``function`` point at consumer code).
