@@ -4,18 +4,24 @@
 
 Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
 
+## Changes in `0.9.37+trifour.4`
+
+- **Consumer-neutral extractors** — removed built-in product-specific extractor module; consumers register callables via ``[[tool.graphify.extractors]]`` (``module`` / ``function`` point at consumer code).
+- **Config post-hook** — ``[tool.graphify] post_extract_merge = "module:function"`` (optional); fork only loads the callable, no hardcoded consumer packages.
+- **ObjectScript dispatch** — built-in ``.cls`` / routine suffix map calls registered consumer extractors only (clear error when none registered).
+
 ## Changes in `0.9.37+trifour.3`
 
 - **viz_layers** — import ``_viz_node_limit`` / ``to_html`` from ``graphify.exporters.html`` after upstream exporters split.
 
 ## Changes in `0.9.37+trifour.2`
 
-- **Consumer post-hook** — ``merge_consumer_kg_extensions`` no-ops on ``ImportError`` when ``shared.kg_extract`` is absent (non-ODS checkouts with a ``tools/`` tree).
+- **Consumer post-hook** — ``merge_consumer_kg_extensions`` no-ops when the configured callable is missing or not importable.
 
 ## Changes in `0.9.37+trifour.1`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.9.37` (`09a34ad`; ~300 commits past `9c27a52` / `0.9.12`).
-- **Preserved Trifour** — call-time `GRAPHIFY_OUT` (`graphify.paths`), consumer extractors / multi-extractor dispatch, `viz_layers` / enrich post-build, ObjectScript AST extract hooks, project-scoped skill warnings when `GRAPHIFY_OUT` is set.
+- **Preserved Trifour** — call-time `GRAPHIFY_OUT` (`graphify.paths`), consumer extractors / multi-extractor dispatch, `viz_layers` / enrich post-build, project-scoped skill warnings when `GRAPHIFY_OUT` is set.
 - **Adopted upstream** — update/watch failed-AST stamp clearing (#2543), NFC path helpers, `load_node_link_graph`, cluster-only write-beside `#1747`, incremental `gitignore=` detect plumbing, CLI/query/path/explain fixes through `0.9.37`.
 
 ## Changes in `0.9.12+trifour.1`
@@ -32,20 +38,18 @@ Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` br
 
 ## Changes in `0.8.39+trifour.7`
 
-- **ObjectScript AST extractor** — ``extract_objectscript_ast`` in ``graphify.trifour.extract.ods`` delegates to consumer ``objectscript_ast`` on ``sys.path``; built-in dispatch routes ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript``.
+- **Consumer ObjectScript routing** — built-in dispatch for ``.cls``, ``.refcls``, ``.mac``, ``.int``, ``.os``, ``.rtn`` through ``extract_objectscript`` (consumer-registered extractors).
 - **Consumer extractor registry** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; cache bypass for consumer routes preserved.
 - **Skill version scope** — stale-skill warnings respect project-only skill paths when ``GRAPHIFY_OUT`` is set (tests in ``tests/test_skill_version_scope.py``).
 
 ## Changes in `0.8.39+trifour.6`
 
 - **Subpath `update`** — relative ``GRAPHIFY_OUT`` resolves from the **project cwd** (``graphify_out_for_watch``), not the watch subdirectory, so ``graphify update reference/`` writes to ``<repo>/.local/graphify-out``.
-- **Legacy ``.refcsp`` encoding** — consumer ``extract_csp`` hook decodes UTF-8 first, then **cp1252** (Windows/Studio export).
 - **Skill version warnings** — when ``GRAPHIFY_OUT`` is set, stale-skill checks target **project** ``.agents/skills/graphify`` only (not global install paths from ``uv tool install``).
 
 ## Changes in `0.8.39+trifour.5`
 
 - **Consumer extractors** — ``[[tool.graphify.extractors]]`` in consumer ``pyproject.toml``; ``graphify.trifour.extract.registry`` routes matching paths before built-in suffix dispatch.
-- **`graphify.trifour.extract.ods`** — thin plugins delegating to consumer modules on ``sys.path`` (``tools/`` layout).
 - **Consumer extractor cache** — paths matched by ``[[tool.graphify.extractors]]`` bypass the AST file cache so routing changes cannot serve stale entries.
 - **``.dfi`` corpus scan** — ``*.DFI`` files included in ``CODE_EXTENSIONS``.
 
@@ -79,23 +83,26 @@ Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` br
 
 ```toml
 [tool.graphify]
-test_roots = ["tools"]
+test_roots = ["tests"]
 folder_prefix_depth = 2
 folder_edges = true
 folder_affinity = true
 pytest_enrich = true
 heuristic_labels = true
+# Optional: after full AST rebuild, call consumer merge hook
+# post_extract_merge = "my_package.hooks:merge_graphify_result"
 
 [[tool.graphify.tests_covers]]
 test = "tests/**/test_*.py"
 strip_prefix = "tests/"
 strip_test_filename_prefix = "test_"
 
-# Monorepo layout (tools/<pkg>/tests/ → tools/<pkg>/):
-# [[tool.graphify.tests_covers]]
-# test = "tools/**/tests/test_*.py"
-# strip_prefix = ""
-# collapse_tests_dir = true
+# Consumer-owned extractors (module lives in the consumer repo):
+# [[tool.graphify.extractors]]
+# module = "my_package.extractors"
+# function = "extract_custom"
+# extensions = [".cls"]
+# path_glob = "src/**"
 ```
 
 ## Environment flags

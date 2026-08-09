@@ -1,5 +1,11 @@
-"""Trifour consumer extractors (ODS BI plugins)."""
+"""Trifour consumer extractor registry (``[[tool.graphify.extractors]]``)."""
 
-from graphify.trifour.extract.ods import extract_bi_cls
+from graphify.trifour.extract.registry import (
+    resolve_consumer_extractor,
+    resolve_consumer_extractors,
+)
 
-__all__ = ["extract_bi_cls"]
+__all__ = [
+    "resolve_consumer_extractor",
+    "resolve_consumer_extractors",
+]

@@ -40,6 +40,8 @@ class GraphifyConfig:
     pytest_enrich: bool = True
     heuristic_labels: bool = False
     extractors: list[ExtractorRule] = field(default_factory=list)
+    # Optional ``module:function`` invoked after full AST rebuild (consumer KG extensions).
+    post_extract_merge: str = ""
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -147,6 +149,7 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
         pytest_enrich=bool(section.get("pytest_enrich", True)),
         heuristic_labels=bool(section.get("heuristic_labels", False)),
         extractors=extractors,
+        post_extract_merge=str(section.get("post_extract_merge") or "").strip(),
     )
 
 

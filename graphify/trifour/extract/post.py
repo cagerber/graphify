@@ -1,23 +1,46 @@
-"""Post-extract merge for ODS consumer KG extensions (extended product pass)."""
+"""Post-extract merge hook — optional consumer callable from ``[tool.graphify]``.
+
+Configure in the consumer ``pyproject.toml``:
+
+```toml
+[tool.graphify]
+post_extract_merge = "my_package.hooks:merge_graphify_result"
+```
+
+The callable signature is::
+
+    def merge_graphify_result(
+        result: dict,
+        *,
+        project_root: Path,
+        full_rebuild: bool,
+    ) -> dict: ...
+
+When unset or not importable, extraction results are returned unchanged.
+"""
 
 from __future__ import annotations
 
-import sys
+import importlib
 from pathlib import Path
 from typing import Any
 
+from graphify.config import load_graphify_config
 
-def _ensure_consumer_tools_on_path(project_root: Path) -> bool:
-    """Insert ``<repo>/tools`` on ``sys.path`` when *project_root* is inside a consumer checkout."""
-    for parent in [project_root.resolve(), *project_root.resolve().parents]:
-        tools = parent / "tools"
-        marker = parent / "pyproject.toml"
-        if tools.is_dir() and marker.is_file():
-            entry = str(tools.resolve())
-            if entry not in sys.path:
-                sys.path.insert(0, entry)
-            return True
-    return False
+
+def _load_merge_callable(spec: str):
+    module_name, _, func_name = spec.partition(":")
+    module_name = module_name.strip()
+    func_name = func_name.strip()
+    if not module_name or not func_name:
+        raise ImportError(
+            f"post_extract_merge must be 'module:function', got {spec!r}"
+        )
+    mod = importlib.import_module(module_name)
+    fn = getattr(mod, func_name, None)
+    if fn is None or not callable(fn):
+        raise ImportError(f"post_extract_merge {spec!r} is not callable")
+    return fn
 
 
 def merge_consumer_kg_extensions(
@@ -27,53 +50,25 @@ def merge_consumer_kg_extensions(
     full_rebuild: bool,
 ) -> dict[str, Any]:
     """
-    On full corpus rebuild, merge extended BI product artefact nodes/edges.
+    On full corpus rebuild, optionally merge consumer-provided extensions.
 
-    Incremental rebuilds leave extended artefacts untouched (refreshed on next
-    full ``graphify update .``). No-op when *project_root* is not an ODS-style
-    consumer (no ``tools/`` + ``pyproject.toml`` walk-up).
+    Incremental rebuilds skip the hook (refreshed on next full ``graphify update .``).
     """
     if not full_rebuild:
         return result
 
-    if not _ensure_consumer_tools_on_path(project_root):
+    cfg = load_graphify_config(project_root)
+    spec = (cfg.post_extract_merge or "").strip()
+    if not spec:
         return result
 
     try:
-        from shared.kg_extract.emit_extended import (
-            build_extended_product_fragment,
-            strip_extended_artefacts_from_result,
-        )
+        merge_fn = _load_merge_callable(spec)
     except ImportError:
-        # Non-ODS consumers may have a tools/ tree without this package.
         return result
 
-    strip_extended_artefacts_from_result(result)
-    frag = build_extended_product_fragment(project_root)
-    if frag.errors:
-        raise ValueError(frag.errors[0])
-
-    ext = frag.to_graphify_dict()
-    if ext.get("error"):
-        raise ValueError(str(ext["error"]))
-
-    existing_ids = {n.get("id") for n in result.get("nodes", [])}
-    for node in ext.get("nodes", []):
-        nid = node.get("id")
-        if nid and nid not in existing_ids:
-            result.setdefault("nodes", []).append(node)
-            existing_ids.add(nid)
-
-    edge_key = "edges" if "edges" in result else "links"
-    seen_edges = {
-        (e.get("source"), e.get("target"), e.get("relation"))
-        for e in result.get(edge_key, [])
-    }
-    for edge in ext.get("edges", []):
-        key = (edge.get("source"), edge.get("target"), edge.get("relation"))
-        if key in seen_edges:
-            continue
-        seen_edges.add(key)
-        result.setdefault(edge_key, []).append(edge)
-
-    return result
+    return merge_fn(
+        result,
+        project_root=project_root,
+        full_rebuild=full_rebuild,
+    )

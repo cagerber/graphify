@@ -1,7 +1,7 @@
 """Canonical graphify output paths (GRAPHIFY_OUT env).
 
 All runtime resolution goes through here so import-time defaults do not
-freeze ``graphify-out/`` when the env var is set later (e.g. ODS
+freeze ``graphify-out/`` when the env var is set later (e.g. consumer
 ``.local/graphify-out``).
 
 Upstream #1423 symbols (``GRAPHIFY_OUT``, ``GRAPHIFY_OUT_NAME``, ``out_path``,

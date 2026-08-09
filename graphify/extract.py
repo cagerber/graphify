@@ -4526,17 +4526,26 @@ def extract_xaml(path: Path) -> dict:
 
 
 def extract_objectscript(path: Path) -> dict:
-    """Extract ObjectScript class/routine structure via Trifour consumer AST."""
-    try:
-        from graphify.trifour.extract.ods import extract_objectscript_ast
+    """Extract ObjectScript via a consumer extractor when registered.
 
-        return extract_objectscript_ast(path)
+    Built-in ``.cls`` / routine dispatch only succeeds when the consumer
+    registers an ObjectScript extractor under ``[[tool.graphify.extractors]]``.
+    """
+    try:
+        from graphify.trifour.extract.registry import resolve_consumer_extractors
+
+        extractors = resolve_consumer_extractors(path)
+        if extractors:
+            if len(extractors) == 1:
+                return extractors[0](path)
+            return _merge_extraction_results([fn(path) for fn in extractors])
     except ImportError:
-        return {
-            "nodes": [],
-            "edges": [],
-            "error": "objectscript extractor unavailable (graphify.trifour not installed)",
-        }
+        pass
+    return {
+        "nodes": [],
+        "edges": [],
+        "error": "objectscript extractor unavailable (register [[tool.graphify.extractors]])",
+    }
 
 
 _DISPATCH: dict[str, Any] = {
