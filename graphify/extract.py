@@ -1264,6 +1264,10 @@ def extract_python(path: Path) -> dict:
     result = _extract_generic(path, _PYTHON_CONFIG)
     if "error" not in result:
         _extract_python_rationale(path, result)
+    if "error" not in result:
+        from graphify.node_kind import finalize_node_kinds
+
+        finalize_node_kinds(result["nodes"])
     return result
 
 

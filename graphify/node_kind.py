@@ -34,7 +34,12 @@ def infer_kind_from_label(label: str, *, parent_is_class: bool = False) -> str:
 
 
 def finalize_node_kinds(nodes: list[dict]) -> None:
-    """Ensure every node has ``kind``; infer file hubs from label == basename."""
+    """Ensure every node has ``kind``; infer from label shape when unset.
+
+    Order matters: file hubs (label == source basename) win, then methods
+    (``.name()``), functions (``name()``), classes (PascalCase identifier),
+    everything else is ``other``.
+    """
     for node in nodes:
         if node.get("kind") in ALL_KINDS:
             continue
@@ -46,5 +51,7 @@ def finalize_node_kinds(nodes: list[dict]) -> None:
             node["kind"] = KIND_METHOD
         elif label.endswith("()"):
             node["kind"] = KIND_FUNCTION
+        elif label[:1].isupper() and label.replace("_", "").isalnum():
+            node["kind"] = KIND_CLASS
         else:
             node["kind"] = KIND_OTHER

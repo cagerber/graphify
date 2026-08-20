@@ -1429,7 +1429,7 @@ def test_rebuild_code_accepts_repo_relative_changed_path_for_subdir_root(tmp_pat
     try:
         os.chdir(tmp_path)
         assert _rebuild_code(Path("src"), no_cluster=True, acquire_lock=False) is True
-        graph_path = src / "graphify-out" / "graph.json"
+        graph_path = tmp_path / "graphify-out" / "graph.json"
         before = json.loads(graph_path.read_text(encoding="utf-8"))
         assert "old_name()" in {n.get("label") for n in before.get("nodes", [])}
 
@@ -1468,7 +1468,7 @@ def test_rebuild_code_subdir_preserves_outside_ast_nodes(tmp_path, changed_paths
     try:
         os.chdir(tmp_path)
         assert _rebuild_code(Path("src"), no_cluster=True, acquire_lock=False) is True
-        graph_path = src / "graphify-out" / "graph.json"
+        graph_path = tmp_path / "graphify-out" / "graph.json"
         data = json.loads(graph_path.read_text(encoding="utf-8"))
         inside_id = next(n["id"] for n in data["nodes"] if n.get("label") == "inside_fn()")
         outside_source = "app.py"
@@ -1541,18 +1541,18 @@ def test_rebuild_code_subdir_survives_absolute_to_relative_invocation(tmp_path):
         })
         graph_path.write_text(json.dumps(data), encoding="utf-8")
 
-        assert _rebuild_code(Path("src"), no_cluster=True, acquire_lock=False) is True
+        assert _rebuild_code(src, no_cluster=True, acquire_lock=False) is True
         rebased = json.loads(graph_path.read_text(encoding="utf-8"))
         semantic = next(n for n in rebased["nodes"] if n["id"] == "local_semantic")
-        assert semantic["source_file"] == "src/old.py"
+        assert semantic["source_file"] == "old.py"
 
         old.rename(src / "renamed.py")
 
-        assert _rebuild_code(Path("src"), no_cluster=True, acquire_lock=False) is True
+        assert _rebuild_code(src, no_cluster=True, acquire_lock=False) is True
         after = json.loads(graph_path.read_text(encoding="utf-8"))
         sources = {n.get("source_file") for n in after["nodes"]}
         assert "old.py" not in sources
-        assert "src/renamed.py" in sources
+        assert "renamed.py" in sources
     finally:
         os.chdir(cwd)
 
@@ -1570,7 +1570,7 @@ def test_rebuild_code_prunes_legacy_watch_relative_subdir_source(tmp_path):
     try:
         os.chdir(tmp_path)
         assert _rebuild_code(Path("src"), no_cluster=True, acquire_lock=False) is True
-        graph_path = src / "graphify-out" / "graph.json"
+        graph_path = tmp_path / "graphify-out" / "graph.json"
         data = json.loads(graph_path.read_text(encoding="utf-8"))
         for item in data["nodes"] + data["links"]:
             source = item.get("source_file")
@@ -3543,7 +3543,7 @@ def test_subfolder_root_marker_preserves_unchanged_nodes(tmp_path, monkeypatch):
     # Build from the repo root scoped to the subfolder (the skill's shape):
     # stored source_file values come out relative to the repo root.
     assert _rebuild_code(Path("src"), acquire_lock=False) is True
-    out = src / "graphify-out"
+    out = repo / "graphify-out"
     graph_path = out / "graph.json"
     baseline = json.loads(graph_path.read_text(encoding="utf-8"))
     baseline_ids = {n["id"] for n in baseline["nodes"]}
@@ -3562,7 +3562,7 @@ def test_subfolder_root_marker_preserves_unchanged_nodes(tmp_path, monkeypatch):
         "class Thing0:\n    def run(self):\n        return 100\n", encoding="utf-8"
     )
     assert _rebuild_code(
-        src.resolve(), changed_paths=[Path("src/mod0.py")], acquire_lock=False
+        Path("src"), changed_paths=[Path("src/mod0.py")], acquire_lock=False
     ) is True
 
     after_ids = {
@@ -3591,13 +3591,13 @@ def test_subfolder_marker_still_evicts_a_deleted_file(tmp_path, monkeypatch):
         )
     monkeypatch.chdir(repo)
     assert _rebuild_code(Path("src"), acquire_lock=False) is True
-    out = src / "graphify-out"
+    out = repo / "graphify-out"
     graph_path = out / "graph.json"
     (out / ".graphify_root").write_text(str(src.resolve()), encoding="utf-8")
 
     (src / "mod1.py").unlink()  # a genuine deletion
     assert _rebuild_code(
-        src.resolve(), changed_paths=[Path("src/mod1.py")], acquire_lock=False
+        Path("src"), changed_paths=[Path("src/mod1.py")], acquire_lock=False
     ) is True
 
     after = json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]
@@ -3619,7 +3619,7 @@ def test_subfolder_marker_incremental_matches_cold_build(tmp_path, monkeypatch):
         )
     monkeypatch.chdir(repo)
     assert _rebuild_code(Path("src"), acquire_lock=False) is True
-    out = src / "graphify-out"
+    out = repo / "graphify-out"
     graph_path = out / "graph.json"
     (out / ".graphify_root").write_text(str(src.resolve()), encoding="utf-8")
 
@@ -3627,7 +3627,7 @@ def test_subfolder_marker_incremental_matches_cold_build(tmp_path, monkeypatch):
         "class Thing0:\n    def run(self):\n        return 100\n", encoding="utf-8"
     )
     assert _rebuild_code(
-        src.resolve(), changed_paths=[Path("src/mod0.py")], acquire_lock=False
+        Path("src"), changed_paths=[Path("src/mod0.py")], acquire_lock=False
     ) is True
     incremental_ids = {n["id"] for n in json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]}
 

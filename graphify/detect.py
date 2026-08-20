@@ -1709,7 +1709,11 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
 
     all_files.sort(key=lambda p: str(p))
 
-    converted_dir = graphify_out_dir(root) / "converted"
+    # Converted docs land in the *cache* root's output dir when one is given,
+    # so detect() never mutates the scanned corpus tree (#2787). Env-aware
+    # GRAPHIFY_OUT is preserved via graphify_out_dir().
+    out_base = Path(cache_root).resolve() if cache_root is not None else root
+    converted_dir = graphify_out_dir(out_base) / "converted"
 
     for p in all_files:
         # For memory dir files, skip hidden/noise filtering

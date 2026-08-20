@@ -12,7 +12,11 @@ import warnings
 from collections.abc import Iterable
 from pathlib import Path
 
-from graphify.paths import graphify_out_dir, graphify_out_rel
+from graphify.paths import (
+    GRAPHIFY_OUT as _GRAPHIFY_OUT,
+    graphify_out_dir,
+    graphify_out_rel,
+)
 
 # AST cache entries are the output of graphify's own extractor code, so they
 # are only valid for the version that wrote them: keying purely on file

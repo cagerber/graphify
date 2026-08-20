@@ -2,7 +2,21 @@
 
 **Public repo.** Changelog here is **package-level only** — no private consumer runbooks or application paths. Consumer integration docs live in the consuming repo.
 
-Upstream: [safishamsi/graphify](https://github.com/safishamsi/graphify) (`v8` branch).
+Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`v8` branch).
+
+## Changes in `0.9.47+trifour.6`
+
+- **Upstream merge 0.9.47** — 150 commits (0.9.38→0.9.47 incl. v1.0.0-tagged work): `graph_path=` threading, mtime-coarse cache window, no-op-checkout hook guard, ocaml/commonlisp extras, Windows path fixes, new grammars. Upstream now lives at **Graphify-Labs/graphify** (org moved from safishamsi).
+- **Merge-regression fixes (this release):**
+  - `skip_dir_names()` prunes only the *top-level* configured-out name — nested parts (`graphify-out/nlp`) no longer name-prune same-named source dirs (#2273 preserved).
+  - `GRAPHIFY_VIZ_NODE_LIMIT=0` kill switch now removes a stale `graph.html` (upstream raised; the fork's `emit_default_html` returns False).
+  - `graphify_project_root()`: relative watch paths resolving inside cwd anchor at the project root (fork semantics); paths escaping cwd are their own root (#2316 manifest portability).
+  - `graphify_out_rel()` precedence: env → explicitly-assigned module attr → default (monkeypatch-setattr teardown can otherwise shadow the env for the whole process).
+  - `cache.py` re-exports `_GRAPHIFY_OUT` (upstream #1423 refactor dropped it).
+  - `finalize_node_kinds()` is now wired into `extract_python` and infers `class` (PascalCase) — the node-kind feature (208fb78) was dead code after the merge.
+  - `openai` added to the dev group (ollama/kimi/gemini backend tests import it).
+  - Upstream watch/labeling tests adapted to fork anchoring; labeling batch-order assertion made hash-order independent.
+- Upstream org moved `safishamsi/graphify` → `Graphify-Labs/graphify`; local `upstream` remote updated to match.
 
 ## Changes in `0.9.37+trifour.5`
 

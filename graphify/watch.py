@@ -1770,6 +1770,12 @@ def _rebuild_code(
                 from graphify.viz_layers import emit_default_html
 
                 html_written = emit_default_html(out, project_root=project_root)
+                if not html_written:
+                    # viz kill switch (GRAPHIFY_VIZ_NODE_LIMIT=0) or missing graph:
+                    # do not leave a stale graph.html behind (upstream raised here).
+                    stale = out / "graph.html"
+                    if stale.exists():
+                        stale.unlink()
             except Exception as viz_err:
                 print(f"[graphify watch] Skipped graph.html: {viz_err}")
                 stale = out / "graph.html"

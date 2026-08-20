@@ -117,6 +117,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.13",
+    "openai",  # ollama/kimi/gemini backend tests import it (extras-locked, tests need it)
     "setuptools>=82.0.1",
     "wheel>=0.47.0",
     "tomli>=2.0 ; python_version < '3.11'",

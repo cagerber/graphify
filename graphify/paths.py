@@ -227,8 +227,21 @@ def disambiguate_ambiguous_candidates(
 
 
 def graphify_out_rel() -> str:
-    """Relative or absolute output directory from GRAPHIFY_OUT (default graphify-out)."""
-    return os.environ.get("GRAPHIFY_OUT", _DEFAULT_REL)
+    """Relative or absolute output directory from GRAPHIFY_OUT (default graphify-out).
+
+    Precedence: the environment, then an explicitly-assigned module attribute
+    (tests/embedding hosts that ``setattr``), then the default. Reading the env
+    first matters: ``monkeypatch.setattr`` restores the PEP 562 value as a real
+    module attribute on teardown, which would otherwise shadow the env for the
+    rest of the process.
+    """
+    from_env = os.environ.get("GRAPHIFY_OUT")
+    if from_env:
+        return from_env
+    explicit = globals().get("GRAPHIFY_OUT")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    return _DEFAULT_REL
 
 
 def graphify_out_name() -> str:
@@ -247,13 +260,24 @@ def graphify_out_dir(root: Path | str | None = None) -> Path:
 
 
 def graphify_project_root(watch_path: Path | str | None = None) -> Path:
-    """Repository root for resolving relative ``GRAPHIFY_OUT`` during subpath scans."""
+    """Repository root for resolving relative ``GRAPHIFY_OUT`` during subpath scans.
+
+    Relative watch paths that resolve *inside* the current directory anchor at
+    cwd (the fork's project-root ``GRAPHIFY_OUT`` — a subdir watch shares the
+    project graph). A relative target that escapes cwd (e.g. ``../other``,
+    watching an external project) is its own root: its manifest and graph must
+    live next to the target, not in the caller's output dir (#2316).
+    """
     if watch_path is None:
         return Path.cwd().resolve()
     wp = Path(watch_path)
     if wp.is_absolute():
         return wp.resolve()
-    return Path.cwd().resolve()
+    resolved = wp.resolve()
+    cwd = Path.cwd().resolve()
+    if cwd == resolved or cwd in resolved.parents:
+        return cwd
+    return resolved
 
 
 def graphify_out_for_watch(watch_path: Path | str | None = None) -> Path:
@@ -280,12 +304,18 @@ def default_graph_json(root: Path | str | None = None) -> str:
 
 
 def skip_dir_names() -> frozenset[str]:
-    """Directory basename(s) to skip when scanning source (includes GRAPHIFY_OUT tail)."""
+    """Directory basename(s) to skip when scanning source (configured-out top level only).
+
+    Only the *top-level* output dir name is a global skip (e.g. ``graphify-out`` for
+    ``graphify-out/nlp``): deeper parts of the configured output path are pruned by
+    full-path equality in ``detect`` (#2273) and must not name-prune same-named
+    source dirs. Absolute configured outputs contribute no scan-root name.
+    """
     names = {_DEFAULT_REL}
     rel = graphify_out_rel()
-    for part in Path(rel).parts:
-        if part not in (".", ".."):
-            names.add(part)
+    rel_path = Path(rel)
+    if not rel_path.is_absolute() and rel not in (".", ""):
+        names.add(rel_path.parts[0])
     return frozenset(names)
 
 
