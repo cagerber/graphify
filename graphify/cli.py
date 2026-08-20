@@ -12,7 +12,7 @@ import re
 import sys
 import time
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT, graphify_out_for_watch
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 _SEARCH_NUDGE = json.dumps({
@@ -663,7 +663,7 @@ def _run_hook_guard(kind: str, strict: bool = False) -> None:
                 in_project = False
                 for v in explicit:
                     p = Path(v)
-                    if not p.is_absolute():
+                    if _is_cwd_relative(v):
                         in_project = True  # relative -> anchored at cwd == in project
                         break
                     try:
@@ -708,6 +708,33 @@ def _run_hook_guard(kind: str, strict: bool = False) -> None:
             sys.stdout.write(_READ_NUDGE)
     except Exception:
         pass
+
+
+def _is_cwd_relative(value: str) -> bool:
+    r"""Whether *value* is anchored at the current working directory.
+
+    The hook's out-of-project guard needs "is this path resolved against cwd?",
+    and ``Path.is_absolute()`` is the wrong question for it on Windows. A
+    driveless rooted path like ``/tmp/x.py`` — the form POSIX-shaped hosts, WSL
+    and Git Bash send — is NOT absolute there (no drive letter), but it is not
+    cwd-relative either: Windows anchors it at the current DRIVE root, so
+    ``Path("/somewhere/else/x.py").resolve()`` is ``C:\somewhere\else\x.py``,
+    which is outside the project unless the project sits at ``C:\``. Reading it
+    as cwd-relative made the guard declare it in-project and emit the read nudge
+    (and, in strict mode, the once-per-session deny) for files the graph has
+    nothing to say about.
+
+    ``C:x.py`` is the same trap from the other side: drive-relative, anchored at
+    that drive's current directory rather than cwd.
+
+    So the test is "no root and no drive", not "not absolute". These stay the
+    host's own rules — the path is about to be resolved against this filesystem,
+    so ``paths.is_absolute_any_platform`` (for stored, portable paths) is
+    deliberately not used. On POSIX ``root`` is set exactly when the path is
+    absolute and ``drive`` is always empty, so this is unchanged there.
+    """
+    pure = PureWindowsPath(value) if os.name == "nt" else PurePosixPath(value)
+    return not pure.root and not pure.drive
 
 
 def _target_is_indexed(file_path: str, root: "Path") -> bool:
@@ -1058,6 +1085,7 @@ def dispatch_command(cmd: str) -> None:
                 depth=2,
                 token_budget=budget,
                 context_filters=context_filters,
+                graph_path=str(gp),
             )
         querylog.log_query(
             kind="query",
@@ -1123,12 +1151,20 @@ def dispatch_command(cmd: str) -> None:
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)
+        # Derive the analysed repo root from the graph's own location so an
+        # absolute-path seed resolves without requiring cwd to be that root
+        # (#2706). The graph is written to <root>/<GRAPHIFY_OUT_NAME>/graph.json,
+        # so the root is the output dir's parent; a graph pointed at directly by
+        # --graph falls back to its own directory.
+        from graphify.paths import GRAPHIFY_OUT_NAME
+        graph_root = gp.parent.parent if gp.parent.name == GRAPHIFY_OUT_NAME else gp.parent
         print(
             format_affected(
                 graph,
                 query,
                 relations=relations or DEFAULT_AFFECTED_RELATIONS,
                 depth=depth,
+                root=graph_root,
             )
         )
     elif cmd in ("god-nodes", "god_nodes"):
@@ -3983,7 +4019,17 @@ def dispatch_command(cmd: str) -> None:
         # passing --allow-partial (the good graph is preserved and the manifest
         # is not stamped, so the retry re-extracts).
         _force_write = cli_allow_partial or not _extraction_incomplete
-        _wrote = _to_json(G, communities, str(graph_json_path), force=_force_write)
+        # Stamp provenance from the ANALYSED repo, not the shell's cwd: without
+        # this, to_json's fallback asks `git rev-parse HEAD` in whatever repo the
+        # command was invoked from, so `graphify extract <target>` run from
+        # another repo's root stamped the invoker's commit into the target's
+        # graph.json — and cluster then propagates that stamp into
+        # GRAPH_REPORT.md (#2534 keeps the extract-time stamp by design). Same
+        # cwd-anchoring mistake #2316 fixed for watch/update, surviving in the
+        # extract path.
+        from graphify.watch import _git_head as _gh_target
+        _wrote = _to_json(G, communities, str(graph_json_path), force=_force_write,
+                          built_at_commit=_gh_target(cwd=Path(target).resolve()))
         if not _wrote:
             # The shrink guard refused: this partial build is smaller than the
             # existing graph. Exit before writing the manifest/marker below, which

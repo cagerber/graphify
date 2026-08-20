@@ -325,6 +325,151 @@ def test_adaptive_retry_re_raises_unrelated_errors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Adaptive retry: timeout recovery (#2866)
+# ---------------------------------------------------------------------------
+
+
+def test_looks_like_timeout_matches_concrete_classes():
+    import subprocess
+    from unittest.mock import MagicMock
+
+    assert llm._looks_like_timeout(subprocess.TimeoutExpired(["cmd"], 30))
+
+    try:
+        import openai
+        assert llm._looks_like_timeout(openai.APITimeoutError(request=MagicMock()))
+    except ImportError:
+        pass
+
+    try:
+        import anthropic
+        assert llm._looks_like_timeout(anthropic.APITimeoutError(request=MagicMock()))
+    except ImportError:
+        pass
+
+    try:
+        import botocore.exceptions
+        assert llm._looks_like_timeout(botocore.exceptions.ReadTimeoutError(endpoint_url="http://test"))
+        assert llm._looks_like_timeout(botocore.exceptions.ConnectTimeoutError(endpoint_url="http://test"))
+    except ImportError:
+        pass
+
+
+def test_looks_like_timeout_ignores_unrelated_errors():
+    for exc in [
+        TimeoutError("timed out"),
+        RuntimeError("timeout"),
+        ValueError("timed out"),
+        RuntimeError("rate limit hit"),
+        Exception("connection refused"),
+        KeyError("missing key"),
+    ]:
+        assert not llm._looks_like_timeout(exc), exc
+
+
+def test_adaptive_retry_splits_on_subprocess_timeout(tmp_path, capsys):
+    import subprocess
+
+    files = [tmp_path / f"f{i}.md" for i in range(4)]
+    for f in files:
+        f.write_text("hello")
+
+    calls = {"n": 0}
+
+    def fake_extract(chunk, *_, **__):
+        calls["n"] += 1
+        if len(chunk) == 4:
+            raise subprocess.TimeoutExpired(["claude", "-p"], 600)
+        return _ok(nodes=[{"id": f.stem} for f in chunk])
+
+    with patch("graphify.llm.extract_files_direct", side_effect=fake_extract):
+        result = llm._extract_with_adaptive_retry(
+            files, backend="claude-cli", api_key=None, model=None, root=tmp_path, max_depth=3
+        )
+
+    assert len(result["nodes"]) == 4
+    assert calls["n"] == 3  # 1 timeout on initial chunk + 2 successful halves
+    err = capsys.readouterr().err
+    assert "timed out at depth 0" in err
+    assert "exceeded context" not in err
+
+
+def test_adaptive_retry_gives_up_on_single_file_timeout(tmp_path, capsys):
+    import subprocess
+
+    f = tmp_path / "huge.md"
+    f.write_text("x")
+
+    def fake_extract(*_, **__):
+        raise subprocess.TimeoutExpired(["claude", "-p"], 600)
+
+    with patch("graphify.llm.extract_files_direct", side_effect=fake_extract):
+        result = llm._extract_with_adaptive_retry(
+            [f], backend="claude-cli", api_key=None, model=None, root=tmp_path, max_depth=3
+        )
+
+    # Single-file timeout gives up and returns empty result without infinite recursion
+    assert result["nodes"] == []
+    assert result["edges"] == []
+    assert result["finish_reason"] == "stop"
+    err = capsys.readouterr().err
+    assert "single-file chunk" in err and "timed out and cannot be split further" in err
+    assert "exceeds model context" not in err
+
+
+def test_adaptive_retry_splits_single_slice_on_timeout(tmp_path, capsys):
+    import subprocess
+    from graphify.file_slice import FileSlice
+
+    f = tmp_path / "doc.md"
+    f.write_text("line 1\nline 2\nline 3\nline 4\nline 5\n")
+    fs = FileSlice(path=f, start=0, end=len(f.read_text()), index=0, total=1)
+
+    calls = {"n": 0}
+
+    def fake_extract(chunk, *_, **__):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise subprocess.TimeoutExpired(["claude", "-p"], 600)
+        return _ok(nodes=[{"id": f"node_{calls['n']}"}])
+
+    with patch("graphify.llm.extract_files_direct", side_effect=fake_extract):
+        result = llm._extract_with_adaptive_retry(
+            [fs], backend="claude-cli", api_key=None, model=None, root=tmp_path, max_depth=3
+        )
+
+    assert len(result["nodes"]) == 2
+    assert calls["n"] == 3  # 1 timeout + 2 bisected slice halves
+    err = capsys.readouterr().err
+    assert "slice of" in err and "timed out at depth 0" in err
+    assert "exceeded context" not in err
+
+
+def test_adaptive_retry_timeout_caps_at_max_depth(tmp_path, capsys):
+    import subprocess
+
+    files = [tmp_path / f"f{i}.md" for i in range(8)]
+    for f in files:
+        f.write_text("hello")
+
+    calls = {"n": 0}
+
+    def always_timeout(chunk, *_, **__):
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(["claude", "-p"], 600)
+
+    with patch("graphify.llm.extract_files_direct", side_effect=always_timeout):
+        result = llm._extract_with_adaptive_retry(
+            files, backend="claude-cli", api_key=None, model=None, root=tmp_path, max_depth=1
+        )
+
+    assert result["nodes"] == []
+    err = capsys.readouterr().err
+    assert "still times out at recursion depth" in err
+    assert "overflows context" not in err
+
+
+# ---------------------------------------------------------------------------
 # Hollow-response detection: empty / null / unparseable content from a
 # successful HTTP call must route into the same bisection path as a true
 # `finish_reason="length"` truncation, not be silently dropped.
@@ -960,6 +1105,19 @@ def test_native_extraction_prompt_matches_skill_spec_on_hyperedges():
     shared = "3 or more nodes clearly participate together"
     assert shared in spec, "skill extraction-spec changed its hyperedge wording"
     assert shared in llm._EXTRACTION_SYSTEM, "native prompt drifted from the skill hyperedge wording"
+
+
+def test_native_extraction_prompt_requests_rationale():
+    """Verify that _EXTRACTION_SYSTEM requests rationale and includes it in the schema."""
+    for deep in (False, True):
+        prompt = llm._extraction_system(deep=deep)
+        assert "rationale" in prompt.lower()
+        # Assert distinctive phrases from the instruction
+        assert "store as a `rationale` attribute on the relevant node" in prompt
+        assert "Do NOT create separate rationale nodes" in prompt
+        assert "If the source does not explicitly provide a reason, omit this attribute" in prompt
+        # Verify the node schema example includes rationale: null
+        assert '"rationale":null' in prompt.replace(" ", "").replace("\n", "")
 
 
 # --- *_BASE_URL env overrides for kimi / gemini / deepseek (#1458) -------------
