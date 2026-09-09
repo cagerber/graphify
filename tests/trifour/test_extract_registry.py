@@ -9,6 +9,7 @@ from graphify.extract import (
     _DISPATCH,
     _bypass_ast_cache,
     _merge_extraction_results,
+    _path_has_extractor,
     extract_objectscript,
 )
 from graphify.trifour.extract.registry import (
@@ -100,6 +101,31 @@ path_glob = "src/**"
 def test_dfi_and_refcsp_in_code_extensions() -> None:
     assert ".dfi" in CODE_EXTENSIONS
     assert ".refcsp" in CODE_EXTENSIONS
+
+
+def test_consumer_owned_paths_skip_no_ast_extractor_warning(tmp_path, monkeypatch):
+    """#1689 must not fire when ``[[tool.graphify.extractors]]`` owns the path."""
+    root = tmp_path
+    _write_fake_consumer(root)
+    ref = root / "reference" / "source_entities"
+    ref.mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+[[tool.graphify.extractors]]
+module = "consumer_ext.extract"
+function = "extract_demo"
+extensions = [".refcsp"]
+path_glob = "reference/source_entities/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    csp = ref / "Demo.refcsp"
+    csp.write_text("<html></html>\n")
+    monkeypatch.chdir(root)
+    monkeypatch.syspath_prepend(str(root))
+    assert _path_has_extractor(csp) is True
 
 
 def test_multiple_consumer_extractors(tmp_path, monkeypatch):

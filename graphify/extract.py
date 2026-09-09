@@ -5221,6 +5221,11 @@ def _get_extractor(path: Path) -> Any | None:
     return _DISPATCH.get(suffix)
 
 
+def _path_has_extractor(path: Path) -> bool:
+    """True when built-in or consumer ``[[tool.graphify.extractors]]`` covers *path*."""
+    return bool(_get_extractors(path))
+
+
 def _safe_extract_with_xaml_root(extractor, path: Path, root: Path) -> dict:
     global _XAML_ACTIVE_EXTRACT_ROOT
     previous_root = _XAML_ACTIVE_EXTRACT_ROOT
@@ -5283,6 +5288,18 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     return idx, result
 
 
+def _ast_progress_interval(total_files: int) -> int:
+    """Print cadence for AST extraction progress (``GRAPHIFY_AST_PROGRESS_INTERVAL``)."""
+    raw = os.environ.get("GRAPHIFY_AST_PROGRESS_INTERVAL", "1000").strip()
+    try:
+        interval = int(raw)
+    except ValueError:
+        interval = 1000
+    if interval <= 0:
+        interval = 1000
+    return min(interval, max(total_files, 1))
+
+
 def _extract_parallel(
     uncached_work: list[tuple[int, Path]],
     per_file: list[dict | None],
@@ -5343,7 +5360,7 @@ def _extract_parallel(
 
     done_count = 0
     failed: list[int] = []  # positions into uncached_work whose future failed
-    _PROGRESS_INTERVAL = 100
+    _PROGRESS_INTERVAL = _ast_progress_interval(total_files)
     try:
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
             futures = {
@@ -5424,7 +5441,7 @@ def _extract_sequential(
     cache_location: Path | None = None,
 ) -> None:
     """Extract uncached files sequentially (fallback for small batches)."""
-    _PROGRESS_INTERVAL = 100
+    _PROGRESS_INTERVAL = _ast_progress_interval(total_files)
     for work_idx, (idx, path) in enumerate(uncached_work):
         if (
             total_files >= _PROGRESS_INTERVAL
@@ -5605,7 +5622,7 @@ def extract(
         _res = per_file[i] or {}
         if _res.get("nodes") or _res.get("error"):
             continue
-        if _get_extractor(_p) is not None:
+        if _path_has_extractor(_p):
             _empty_sources.append(str(_p))
     if _empty_sources:
         _shown = ", ".join(Path(x).name for x in _empty_sources[:5])
@@ -5635,7 +5652,7 @@ def extract(
                 _failed_sources.append(_key)
                 _failed_seen.add(_key)
             continue
-        if (not _res.get("nodes")) and _get_extractor(_p) is not None:
+        if (not _res.get("nodes")) and _path_has_extractor(_p):
             if _key not in _failed_seen:
                 _failed_sources.append(_key)
                 _failed_seen.add(_key)
@@ -5649,7 +5666,7 @@ def extract(
     _no_extractor: dict[str, int] = {}
     for _p in paths:
         _ext = _p.suffix.lower()
-        if _ext in _CODE_EXTS and _get_extractor(_p) is None:
+        if _ext in _CODE_EXTS and not _path_has_extractor(_p):
             _no_extractor[_ext] = _no_extractor.get(_ext, 0) + 1
     if _no_extractor:
         _by_count = ", ".join(
