@@ -6092,16 +6092,15 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
         if cached is not None:
             return idx, cached
 
-    extractor = _get_extractor(path)
-    if extractor is None:
+    extractors = _get_extractors(path)
+    if not extractors:
         return idx, {"nodes": [], "edges": []}
 
-    extractors = _get_extractors(path)
     if len(extractors) > 1:
         results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
         result = _merge_extraction_results(results)
     else:
-        result = _safe_extract_with_xaml_root(extractor, path, root)
+        result = _safe_extract_with_xaml_root(extractors[0], path, root)
     # Never cache a zero-node result for an extractable file. Every supported
     # source produces at least a file node, so an empty node list is anomalous
     # (e.g. a transient batch/parallel hiccup). Caching it makes the empty
@@ -6276,18 +6275,17 @@ def _extract_sequential(
                 f"  AST extraction: {work_idx}/{len(uncached_work)} uncached files ({work_idx * 100 // len(uncached_work)}%)",
                 flush=True,
             )
-        extractor = _get_extractor(path)
-        if extractor is None:
+        extractors = _get_extractors(path)
+        if not extractors:
             per_file[idx] = {"nodes": [], "edges": []}
             continue
         bypass_cache = _bypass_ast_cache(path)
         # XAML boundary anchors on `root` (the corpus), not the cache location.
-        extractors = _get_extractors(path)
         if len(extractors) > 1:
             results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
             result = _merge_extraction_results(results)
         else:
-            result = _safe_extract_with_xaml_root(extractor, path, root)
+            result = _safe_extract_with_xaml_root(extractors[0], path, root)
         # See _extract_single_file: don't cache an anomalous zero-node result (#1666).
         if not bypass_cache and "error" not in result and result.get("nodes"):
             save_cached(path, result, root, cache_root=cache_location)

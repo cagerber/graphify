@@ -128,6 +128,39 @@ path_glob = "reference/source_entities/**"
     assert _path_has_extractor(csp) is True
 
 
+def test_consumer_only_path_uses_consumer_extractor_in_worker(tmp_path, monkeypatch):
+    """Consumer-only extensions must not short-circuit on missing built-in dispatch."""
+    root = tmp_path
+    _write_fake_consumer(root)
+    src = root / "reference" / "source_entities"
+    src.mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+[[tool.graphify.extractors]]
+module = "consumer_ext.extract"
+function = "extract_demo"
+extensions = [".refcsp"]
+path_glob = "reference/source_entities/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    csp = src / "Demo.refcsp"
+    csp.write_text("<html></html>\n")
+    monkeypatch.chdir(root)
+    monkeypatch.syspath_prepend(str(root))
+
+    from graphify.extract import _extract_single_file
+
+    idx, result = _extract_single_file(
+        (0, str(csp.resolve()), str(root.resolve()), str(root.resolve()))
+    )
+    assert idx == 0
+    assert result.get("nodes")
+    assert result["nodes"][0]["id"] == "Demo"
+
+
 def test_multiple_consumer_extractors(tmp_path, monkeypatch):
     root = tmp_path
     _write_fake_consumer(root)

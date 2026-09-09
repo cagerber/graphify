@@ -4,6 +4,10 @@
 
 Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`v8` branch).
 
+## Changes in `0.9.57+trifour.2`
+
+- **Consumer-only extractors in parallel/sequential workers** — ``_extract_single_file`` / sequential fallback no longer return empty when built-in ``_get_extractor`` is ``None`` but ``[[tool.graphify.extractors]]`` owns the path (fixes false **#1666** for ``.refcsp`` / consumer fragments under ``ProcessPoolExecutor``).
+
 ## Changes in `0.9.57+trifour.1`
 
 - **Upstream merge 0.9.57** — 0.9.48→0.9.57: Robot Framework extractors (`.robot`/`.resource`), skipped-result manifest fix (#2879), skill-version warning names platform (#3144), `_reconcile_graph_html` for watch HTML, plus upstream fixes through 0.9.57.
