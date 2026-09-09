@@ -4,6 +4,17 @@
 
 Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`v8` branch).
 
+## Changes in `0.9.57+trifour.1`
+
+- **Upstream merge 0.9.57** — 0.9.48→0.9.57: Robot Framework extractors (`.robot`/`.resource`), skipped-result manifest fix (#2879), skill-version warning names platform (#3144), `_reconcile_graph_html` for watch HTML, plus upstream fixes through 0.9.57.
+- **Fork deltas preserved:**
+  - `_path_has_extractor()` — consumer ``[[tool.graphify.extractors]]`` paths (e.g. `.refcsp`, `.dfi`) no longer trigger false **#1689** “no AST extractor” warnings or empty-node failure marks.
+  - `GRAPHIFY_AST_PROGRESS_INTERVAL` default **1000** (large corpora).
+  - ObjectScript dispatch (`.cls`/`.refcls`/routines) via consumer extractors, not Apex.
+  - Trifour `CODE_EXTENSIONS` (`.refcls`, `.dfi`, `.refcsp`, routines).
+  - `GRAPHIFY_OUT` skill-version check scoped to project `.agents/skills/graphify` only.
+  - Post-build enrich hook in watch path.
+
 ## Changes in `0.9.47+trifour.6`
 
 - **Upstream merge 0.9.47** — 150 commits (0.9.38→0.9.47 incl. v1.0.0-tagged work): `graph_path=` threading, mtime-coarse cache window, no-op-checkout hook guard, ocaml/commonlisp extras, Windows path fixes, new grammars. Upstream now lives at **Graphify-Labs/graphify** (org moved from safishamsi).

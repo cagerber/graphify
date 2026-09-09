@@ -321,7 +321,9 @@ def test_rebuild_bodies_read_graphify_root(name, body):
     # The recovered root is what gets rebuilt, not a hardcoded cwd.
     assert "_rebuild_code(_root" in body, f"{name} does not pass the recovered root"
     # Quote-safe inside the shell-double-quoted launcher: single quotes only.
-    assert "read_text(encoding='utf-8')" in body, f"{name} root read is not single-quoted"
+    # `utf-8-sig` rather than `utf-8` so a Windows PowerShell 5.1 BOM cannot ride
+    # into the path (#3028); the codec is a no-op on a BOM-less marker.
+    assert "read_text(encoding='utf-8-sig')" in body, f"{name} root read is not single-quoted"
 
 
 def test_rebuild_bodies_with_graphify_root_are_valid_python():
@@ -354,6 +356,111 @@ def test_rebuild_bodies_arm_a_timeout_without_sigalrm(name, body):
     # rest of the body, or the same event reads differently per platform.
     prefixes = set(re.findall(r"print\(f'\[([a-z ]+)\]", body))
     assert len(prefixes) == 1, f"{name} mixes log prefixes {sorted(prefixes)} (#2148)"
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_rebuild_bodies_kill_children_before_os_exit(name, body):
+    """os._exit() terminates only the rebuild process itself, not any
+    ProcessPoolExecutor worker it spawned for a large corpus -- os._exit skips
+    every cleanup path, including the pool's own context-manager shutdown, so a
+    worker mid-task at the moment the watchdog fires is orphaned (reparented to
+    PID 1 on POSIX) and keeps running, unsupervised, for as long as whatever it
+    was doing takes. A worker stuck in catastrophic regex backtracking (the
+    exact shape #3341 fixed) has been observed surviving 2.5 days that way. The
+    watchdog owns no reference to the pool object (it fires on a separate timer
+    thread, unrelated to whichever stack frame currently holds the pool), but
+    multiprocessing.active_children() enumerates every live worker process
+    regardless of which thread asks, so the fallback kills them by SIGKILL
+    (not terminate/SIGTERM, which a process stuck in a C-level call like
+    regex backtracking never gets a chance to act on) before exiting itself."""
+    fallbacks = [
+        node.orelse
+        for node in ast.walk(ast.parse(body))
+        if isinstance(node, ast.If) and "'SIGALRM'" in ast.dump(node.test) and node.orelse
+    ]
+    assert fallbacks, f"{name} has no else-branch for the missing-SIGALRM case"
+    dumped = "".join(ast.dump(stmt) for stmt in fallbacks[0])
+    assert "attr='active_children'" in dumped, (
+        f"{name} fallback does not enumerate live workers before exiting (#3341 follow-up)"
+    )
+    assert "attr='kill'" in dumped, (
+        f"{name} fallback does not SIGKILL orphaned workers before exiting (#3341 follow-up)"
+    )
+    # The kill loop must run BEFORE os._exit, not after (dead code) or replacing
+    # it (the rebuild process itself still has to exit on timeout). _bail's body
+    # is a straight-line statement list (no branching), so statement POSITION is
+    # execution order -- unlike ast.walk's traversal, which is breadth-first and
+    # would visit os._exit's Call node (a direct child of a top-level Expr)
+    # before a Call nested one level deeper inside the for loop's body, even
+    # though the for loop is written, and runs, first.
+    bail_def = next(
+        n for n in ast.walk(ast.parse(body))
+        if isinstance(n, ast.FunctionDef) and n.name == "_bail"
+    )
+    def _stmt_index_calling(attr: str) -> int:
+        for i, stmt in enumerate(bail_def.body):
+            if any(
+                isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == attr
+                for n in ast.walk(stmt)
+            ):
+                return i
+        raise AssertionError(f"{name}: no statement in _bail calls .{attr}(...)")
+    assert _stmt_index_calling("active_children") < _stmt_index_calling("_exit"), (
+        f"{name} kills workers after os._exit instead of before"
+    )
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_sigalrm_handler_kills_children_before_raising(name, body):
+    """The no-SIGALRM fallback killing children before os._exit is not enough:
+    on POSIX, where SIGALRM IS available, a TimeoutError raised while the main
+    thread is waiting inside the ProcessPoolExecutor with-block propagates
+    straight through that block's own __exit__, which calls
+    shutdown(wait=True) and blocks until every worker exits -- forever, for a
+    worker stuck in a C-level call the alarm firing does nothing to stop
+    (reproduced: a worker in an unconditional loop left the process still
+    running 15s after a 2s alarm). The except TimeoutError handler is never
+    reached, so the timeout provides no bound at all in that case. Killing
+    workers INSIDE the signal handler, before it raises, means shutdown has
+    nothing left to wait for by the time the exception reaches it."""
+    handler_def = next(
+        n for n in ast.walk(ast.parse(body))
+        if isinstance(n, ast.FunctionDef) and n.name == "_sigalrm_bail"
+    )
+    dumped = "".join(ast.dump(stmt) for stmt in handler_def.body)
+    assert "attr='active_children'" in dumped, (
+        f"{name} SIGALRM handler does not enumerate live workers (#3397 follow-up)"
+    )
+    assert "attr='kill'" in dumped, (
+        f"{name} SIGALRM handler does not SIGKILL workers (#3397 follow-up)"
+    )
+
+    def _stmt_index_calling(attr: str) -> int:
+        for i, stmt in enumerate(handler_def.body):
+            if any(
+                isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == attr
+                for n in ast.walk(stmt)
+            ):
+                return i
+        raise AssertionError(f"{name}: no statement in _sigalrm_bail calls .{attr}(...)")
+    kill_idx = _stmt_index_calling("kill")
+    raise_idx = next(
+        i for i, stmt in enumerate(handler_def.body) if isinstance(stmt, ast.Raise)
+    )
+    assert kill_idx < raise_idx, (
+        f"{name} raises TimeoutError before killing workers, defeating the fix"
+    )
+    # signal.signal must be wired to this handler, not still the old inline
+    # lambda that only threw the exception.
+    assert re.search(r"signal\.signal\(signal\.SIGALRM,\s*_sigalrm_bail\)", body), (
+        f"{name} does not register _sigalrm_bail as the SIGALRM handler"
+    )
 
 
 def test_detached_launch_targets_graphify_python():
@@ -449,6 +556,148 @@ def test_probe_prefers_sibling_python_exe_on_windows_layouts():
     from graphify.hooks import _PYTHON_DETECT
     assert "/../python.exe" in _PYTHON_DETECT
     assert "/python.exe" in _PYTHON_DETECT
+
+
+# ── #2852: interpreter resolution under uv tool installs ───────────────────
+
+def _detect_run(tmp_path, home, stub_bin, env_extra=None):
+    """Run the emitted _PYTHON_DETECT under a real sh in a controlled
+    environment — dead pin, no .graphify_python, an unparseable launcher first
+    on PATH, and a python3 that cannot import graphify (#2852's uv-tool
+    Windows machine reproduced on POSIX) — and report what GRAPHIFY_PYTHON
+    resolved to. Behavior of the emitted script, not the source string
+    (per the #2126/#2641 convention)."""
+    from graphify.hooks import _PYTHON_DETECT
+    script = tmp_path / "detect_run.sh"
+    script.write_text(
+        _PYTHON_DETECT + '\necho "RESOLVED=$GRAPHIFY_PYTHON"\n',
+        encoding="utf-8", newline="\n",
+    )
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env.pop("UV_TOOL_DIR", None)
+    if env_extra:
+        env.update(env_extra)
+    env["PATH"] = str(stub_bin) + os.pathsep + env["PATH"]
+    return subprocess.run(
+        ["sh", script.name], capture_output=True, text=True,
+        cwd=str(tmp_path), env=env,
+    )
+
+
+def _broken_uv_machine(tmp_path):
+    """#2852's machine: the only graphify-importable python lives in the uv
+    tool venv; the launcher on PATH is a binary trampoline reached WITHOUT its
+    .exe suffix (Git-Bash command -v); ambient python3 cannot import graphify.
+    Returns (home, stub_bin)."""
+    home = tmp_path / "home"
+    stub_bin = tmp_path / "stubbin"
+    stub_bin.mkdir(parents=True)
+    launcher = stub_bin / "graphify"
+    launcher.write_bytes(b"MZ\x90\x00\x03" + bytes(range(60)))
+    launcher.chmod(0o755)
+    # Ambient pythons answer the probe with "no module named graphify" —
+    # under uv tool install no system python can see the isolated venv (#2852).
+    for name in ("python3", "python"):
+        py = stub_bin / name
+        py.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+        py.chmod(0o755)
+    return home, stub_bin
+
+
+def _tool_venv(home, tool, rel, ok):
+    """Create a fake uv tool env python under <home>/.local/share/uv/tools;
+    ok=False simulates a venv without graphify (the probe must reject it)."""
+    py = home / ".local" / "share" / "uv" / "tools" / tool / rel
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text(
+        "#!/bin/sh\nexit 0\n" if ok else "#!/bin/sh\nexit 1\n",
+        encoding="utf-8", newline="\n",
+    )
+    py.chmod(0o755)
+    return py
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh required to run emitted probe chain")
+def test_uv_tool_env_rescues_hook_when_pin_and_launcher_fail(tmp_path):
+    """#2852: `uv tool install` puts graphify in an isolated venv no ambient
+    python can import, and on Windows the launcher is a binary trampoline with
+    no shebang to parse. With the pin dead (git-template hooks, a pin rejected
+    by the allowlist, or a venv moved by an upgrade), every earlier probe
+    missed and the hook no-op'd with only a warning. The uv tool-env scan must
+    adopt the venv whose python passes the probe — and keep walking past
+    sibling tool envs that do not (glob order puts aaa-tool first)."""
+    home, stub_bin = _broken_uv_machine(tmp_path)
+    other = _tool_venv(home, "aaa-plain-tool", "bin/python", ok=False)
+    mine = _tool_venv(home, "graphifyy", "bin/python", ok=True)
+    res = _detect_run(tmp_path, home, stub_bin)
+    assert res.returncode == 0, res.stderr
+    assert f"RESOLVED={mine}" in res.stdout, res.stdout + res.stderr
+    assert f"RESOLVED={other}" not in res.stdout
+    assert "could not locate" not in res.stderr
+
+
+@pytest.mark.skipif(shutil.which("sh") is None or os.name == "nt",
+                    reason="sh required; a sh-script named python.exe only execs on POSIX")
+def test_uv_tool_env_honors_uv_tool_dir_and_windows_layout(tmp_path):
+    """UV_TOOL_DIR overrides the default location, and the Windows layout
+    (`<tool>\\Scripts\\python.exe`) is scanned too — the reporter's exact
+    machine (#2852)."""
+    home, stub_bin = _broken_uv_machine(tmp_path)
+    tools = tmp_path / "custom-tools"
+    py = tools / "graphifyy" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    py.chmod(0o755)
+    res = _detect_run(tmp_path, home, stub_bin, env_extra={"UV_TOOL_DIR": str(tools)})
+    assert res.returncode == 0, res.stderr
+    assert f"RESOLVED={py}" in res.stdout, res.stdout + res.stderr
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh required to run emitted probe chain")
+def test_uv_tool_env_without_graphify_still_fails_loudly(tmp_path):
+    """The scan must not adopt a tool env whose python lacks graphify; the
+    chain still ends in the loud 'could not locate' warning on stderr — never
+    a bare silent exit (#2852's diagnosis ask)."""
+    home, stub_bin = _broken_uv_machine(tmp_path)
+    _tool_venv(home, "aaa-tool", "bin/python", ok=False)
+    res = _detect_run(tmp_path, home, stub_bin)
+    assert "could not locate" in res.stderr
+    # the sentinel must NOT print: the chain exited at the warning
+    assert res.stdout == ""
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh required to run emitted probe chain")
+def test_shebang_parse_requires_leading_hash_bang(tmp_path):
+    """The launcher read must gate on a leading '#!': a non-script launcher
+    whose first line merely NAMES a working python must not be adopted as the
+    interpreter. Pre-gate code parsed any first line, so trampoline bytes
+    (and here, a decoy path) reached the shebang parse (#2852)."""
+    home, stub_bin = _broken_uv_machine(tmp_path)
+    mine = _tool_venv(home, "graphifyy", "bin/python", ok=True)
+    decoy = stub_bin / "fakepy"
+    decoy.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    decoy.chmod(0o755)
+    launcher = stub_bin / "graphify"
+    launcher.write_text(
+        f"{decoy}\nnot a script — the first line just names a python\n",
+        encoding="utf-8", newline="\n",
+    )
+    launcher.chmod(0o755)
+    res = _detect_run(tmp_path, home, stub_bin)
+    assert res.returncode == 0, res.stderr
+    assert f"RESOLVED={mine}" in res.stdout, res.stdout + res.stderr
+    assert "fakepy" not in res.stdout
+
+
+def test_uv_tool_probe_present_in_emitted_detect():
+    """Static companion to the runtime tests above (same convention as the
+    NUL-safe read): the emitted chain must scan uv tool envs and honor
+    UV_TOOL_DIR."""
+    from graphify.hooks import _PYTHON_DETECT
+    assert "UV_TOOL_DIR" in _PYTHON_DETECT
+    assert '"$HOME/.local/share/uv/tools"' in _PYTHON_DETECT
+    assert '"$HOME/AppData/Roaming/uv/tools"' in _PYTHON_DETECT
 
 
 def _extract_case_pattern(marker: str) -> str:
@@ -626,7 +875,8 @@ def test_checkout_hook_skips_same_head_noop_at_runtime():
     assert guard in _CHECKOUT_SCRIPT, "guard missing from the checkout script"
     # Real script through the same-head guard, then a sentinel — stops before the
     # graphify-out check / detached launch so nothing is actually rebuilt.
-    prefix = _CHECKOUT_SCRIPT.split(guard)[0] + guard + "\necho RAN\n"
+    # The block runs inside a subshell (#2986); close it after the sentinel.
+    prefix = _CHECKOUT_SCRIPT.split(guard)[0] + guard + "\necho RAN\n)\n"
 
     def run(prev, new, flag):
         # sh -c CMD name arg1 arg2 arg3  ->  $0=name $1=prev $2=new $3=flag
@@ -1003,3 +1253,24 @@ def test_both_hooks_configured(tmp_path):
     for name in ("post-commit", "post-checkout"):
         hook_text = (repo / ".git" / "hooks" / name).read_text()
         assert 'export GRAPHIFY_VIZ_NODE_LIMIT="${GRAPHIFY_VIZ_NODE_LIMIT:-42}"' in hook_text
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_rebuild_bodies_tolerate_a_bom_in_graphify_root(name, body):
+    """The rebuild must survive a marker written by Windows PowerShell 5.1 (#3028).
+
+    `Out-File -Encoding utf8` on 5.1 always writes a UTF-8 BOM, so the path the
+    hook reads back begins with U+FEFF. `strip()` does not remove it, and it rode
+    straight into a Windows path API: every post-commit rebuild died with
+    `WinError 123` while `hook install` / `hook status` still reported success.
+    `utf-8-sig` drops an optional BOM and is a no-op on a clean file.
+    """
+    assert "encoding='utf-8-sig'" in body, (
+        f"{name} rebuild body must read .graphify_root BOM-tolerantly"
+    )
+    assert "encoding='utf-8')" not in body, (
+        f"{name} rebuild body still has a BOM-intolerant read"
+    )

@@ -67,10 +67,17 @@ if [ -z "$GRAPHIFY_PYTHON" ]; then
         # POSIX launcher: parse the shebang. head -c + tr strip NUL bytes first —
         # when the launcher is a Windows binary reached without its .exe suffix,
         # a raw `head -1` reads binary into the command substitution and the
-        # shell warns about ignored null bytes on every commit.
+        # shell warns about ignored null bytes on every commit. Gate on a
+        # leading '#!': a launcher can also be a binary trampoline with no
+        # shebang at all (uv tool installs on Windows), and its bytes must
+        # never reach the shebang parse (#2852).
         case "$GRAPHIFY_BIN" in
-            *.exe) _SHEBANG="" ;;
-            *)     _SHEBANG=$(head -c 256 "$GRAPHIFY_BIN" 2>/dev/null | tr -d '\\000' | head -n 1 | sed 's/^#![[:space:]]*//') ;;
+            *.exe) _GFY_HEAD="" ;;
+            *)     _GFY_HEAD=$(head -c 256 "$GRAPHIFY_BIN" 2>/dev/null | tr -d '\\000') ;;
+        esac
+        case "$_GFY_HEAD" in
+            '#!'*) _SHEBANG=$(printf '%s\\n' "$_GFY_HEAD" | head -n 1 | sed 's/^#![[:space:]]*//') ;;
+            *)     _SHEBANG="" ;;
         esac
         case "$_SHEBANG" in
             */env\\ *) GRAPHIFY_PYTHON="${_SHEBANG#*/env }" ;;
@@ -85,6 +92,29 @@ if [ -z "$GRAPHIFY_PYTHON" ]; then
             GRAPHIFY_PYTHON=""
         fi
     fi
+fi
+# Fourth probe: uv tool environments. `uv tool install` (the README's
+# recommended method) puts graphify in an isolated venv that no ambient
+# python can import, and on Windows its launcher on PATH is a binary
+# trampoline with no shebang to parse — so the probes above can all miss a
+# healthy install and the hook dies at the last-resort fallback (#2852).
+# Scan the uv tool envs directly; UV_TOOL_DIR overrides the default
+# location. A tool env is adopted only if its python passes the probe, so a
+# co-installed tool without graphify never satisfies it.
+if [ -z "$GRAPHIFY_PYTHON" ]; then
+    for _GFY_TOOLS in \
+        "${UV_TOOL_DIR:-}" \
+        "$HOME/.local/share/uv/tools" \
+        "$HOME/AppData/Roaming/uv/tools"; do
+        [ -n "$_GFY_TOOLS" ] || continue
+        for _GFY_CAND in "$_GFY_TOOLS"/*/bin/python "$_GFY_TOOLS"/*/Scripts/python.exe; do
+            [ -x "$_GFY_CAND" ] || continue
+            if "$_GFY_CAND" -c "$_GFY_PROBE" 2>/dev/null; then
+                GRAPHIFY_PYTHON="$_GFY_CAND"
+                break 2
+            fi
+        done
+    done
 fi
 # Last resort: try python3 / python (works for system/venv installs on PATH).
 if [ -z "$GRAPHIFY_PYTHON" ]; then
@@ -104,7 +134,7 @@ fi
 # double-quote, $, backtick or backslash characters: it is carried inside a
 # shell double-quoted `-c "..."` argument (see _detached_launch).
 _REBUILD_BODY_COMMIT = """\
-import os, signal, sys, threading
+import os, signal, sys, threading, multiprocessing
 from pathlib import Path
 
 changed_raw = os.environ.get('GRAPHIFY_CHANGED', '')
@@ -122,11 +152,24 @@ try:
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0:
         if hasattr(signal, 'SIGALRM'):
-            signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
+            def _sigalrm_bail(*_a):
+                # Killing here, before the exception unwinds, matters: once
+                # TimeoutError starts propagating it passes straight through
+                # the ProcessPoolExecutor with-block's own __exit__, which
+                # calls shutdown(wait=True) and blocks until every worker
+                # exits -- forever, for a worker stuck the way #3341 was,
+                # since the alarm firing never actually stops it. Killing the
+                # workers first means shutdown has nothing left to wait for.
+                for _child in multiprocessing.active_children():
+                    _child.kill()
+                raise TimeoutError(f'graphify rebuild exceeded {_timeout}s')
+            signal.signal(signal.SIGALRM, _sigalrm_bail)
             signal.alarm(_timeout)
         else:
             def _bail():
                 print(f'[graphify hook] graphify rebuild exceeded {_timeout}s', flush=True)
+                for _child in multiprocessing.active_children():
+                    _child.kill()
                 os._exit(1)
             _watchdog = threading.Timer(_timeout, _bail)
             _watchdog.daemon = True
@@ -135,7 +178,7 @@ try:
     _root = Path('.')
     _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
-        _txt = _saved.read_text(encoding='utf-8').strip()
+        _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
             _root = Path(_txt)
     _rebuild_code(_root, changed_paths=changed, force=_force)
@@ -162,17 +205,30 @@ _REBUILD_BODY_CHECKOUT = """\
 from graphify.watch import _rebuild_code, _apply_resource_limits
 from graphify.paths import graphify_out_dir
 from pathlib import Path
-import os, signal, sys, threading
+import os, signal, sys, threading, multiprocessing
 try:
     _apply_resource_limits()
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0:
         if hasattr(signal, 'SIGALRM'):
-            signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
+            def _sigalrm_bail(*_a):
+                # Killing here, before the exception unwinds, matters: once
+                # TimeoutError starts propagating it passes straight through
+                # the ProcessPoolExecutor with-block's own __exit__, which
+                # calls shutdown(wait=True) and blocks until every worker
+                # exits -- forever, for a worker stuck the way #3341 was,
+                # since the alarm firing never actually stops it. Killing the
+                # workers first means shutdown has nothing left to wait for.
+                for _child in multiprocessing.active_children():
+                    _child.kill()
+                raise TimeoutError(f'graphify rebuild exceeded {_timeout}s')
+            signal.signal(signal.SIGALRM, _sigalrm_bail)
             signal.alarm(_timeout)
         else:
             def _bail():
                 print(f'[graphify] graphify rebuild exceeded {_timeout}s', flush=True)
+                for _child in multiprocessing.active_children():
+                    _child.kill()
                 os._exit(1)
             _watchdog = threading.Timer(_timeout, _bail)
             _watchdog.daemon = True
@@ -184,7 +240,7 @@ try:
     _root = Path('.')
     _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
-        _txt = _saved.read_text(encoding='utf-8').strip()
+        _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
             _root = Path(_txt)
     _rebuild_code(_root, force=_force)
@@ -216,7 +272,14 @@ except Exception as exc:
 # the real rebuild fully detached and returns immediately, so the hook never
 # blocks. POSIX uses start_new_session (the setsid equivalent); Windows uses
 # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, breaking away from any job object
-# when allowed. This payload is carried inside a shell double-quoted -c argument,
+# when allowed. Do NOT 'simplify' CREATE_NO_WINDOW back into DETACHED_PROCESS:
+# on Windows 11 with Windows Terminal as the default console host, a
+# console-less python still gets a VISIBLE console allocated when its runtime
+# touches the console API during startup (ctrl-handler installation), popping
+# an empty Terminal window over whatever the user is doing - once per commit,
+# for the whole rebuild. Reproduced via GetConsoleWindow(): DETACHED_PROCESS
+# child reports a visible hwnd, CREATE_NO_WINDOW child reports none (3bac3df).
+# This payload is carried inside a shell double-quoted -c argument,
 # so it deliberately uses only single-quoted Python strings (no ", $, ` or \\).
 _LAUNCHER_TEMPLATE = """\
 import os, subprocess, sys
@@ -274,10 +337,20 @@ fi
 """
 
 
+# Both hook bodies run inside a subshell `( ... )`. The generated block is
+# appended to whatever post-commit / post-checkout already exists, and other
+# tools chain their own logic after it; every skip condition in the block is a
+# bare `exit 0`, which in a flat script ends the WHOLE hook, silently dropping
+# anything after graphify's end marker - on every root commit (HEAD~1 does
+# not exist), every rebase/merge, every linked worktree, every
+# GRAPHIFY_SKIP_HOOK=1 (#2986). Inside the subshell an `exit` ends only
+# graphify's section; the detached rebuild launch is unaffected, and the
+# hook's own exit status stays 0 as before.
 _HOOK_SCRIPT = """\
 # graphify-hook-start
 # Auto-rebuilds the knowledge graph after each commit (code files only, no LLM needed).
 # Installed by: graphify hook install
+(
 
 # Deterministic clustering: networkx louvain iterates string-keyed sets whose
 # order is randomized per-process by PYTHONHASHSEED, so community assignments
@@ -327,7 +400,8 @@ _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 export GRAPHIFY_REBUILD_LOG="$_GRAPHIFY_LOG"
 echo "[graphify hook] launching background rebuild (log: $_GRAPHIFY_LOG)"
-""" + _detached_launch(_REBUILD_BODY_COMMIT) + """# graphify-hook-end
+""" + _detached_launch(_REBUILD_BODY_COMMIT) + """)
+# graphify-hook-end
 """
 
 
@@ -335,6 +409,7 @@ _CHECKOUT_SCRIPT = """\
 # graphify-checkout-hook-start
 # Auto-rebuilds the knowledge graph (code only) when switching branches.
 # Installed by: graphify hook install
+(
 
 # Deterministic clustering: networkx louvain iterates string-keyed sets whose
 # order is randomized per-process by PYTHONHASHSEED, so community assignments
@@ -386,7 +461,8 @@ _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 export GRAPHIFY_REBUILD_LOG="$_GRAPHIFY_LOG"
 echo "[graphify] Branch switched - launching background rebuild (log: $_GRAPHIFY_LOG)"
-""" + _detached_launch(_REBUILD_BODY_CHECKOUT) + """# graphify-checkout-hook-end
+""" + _detached_launch(_REBUILD_BODY_CHECKOUT) + """)
+# graphify-checkout-hook-end
 """
 
 
