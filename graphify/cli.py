@@ -11,7 +11,7 @@ import os
 import re
 import sys
 import time
-from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT
+from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT, graphify_out_for_watch
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
@@ -1204,6 +1204,10 @@ def dispatch_command(cmd: str) -> None:
             print("Usage: graphify query \"<question>\" [--dfs] [--context C] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
         from graphify.serve import _query_graph_text
+        from graphify.ext.query.callers import (
+            direct_callers_text,
+            extract_callers_target,
+        )
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
         from graphify import querylog
@@ -1298,16 +1302,23 @@ def dispatch_command(cmd: str) -> None:
             sys.exit(1)
         import time as _time
         _t0 = _time.perf_counter()
-        _mode = "dfs" if use_dfs else "bfs"
-        _result = _query_graph_text(
-            G,
-            question,
-            mode=_mode,
-            depth=2,
-            token_budget=budget,
-            context_filters=context_filters,
-            graph_path=str(gp),
-        )
+        _callers_target = extract_callers_target(question)
+        if _callers_target and not context_filters and not use_dfs:
+            # Direct "who calls X" → inbound call list (not community BFS).
+            # Explicit --context / --dfs keep the traversal path.
+            _result = direct_callers_text(G, _callers_target)
+            _mode = "callers"
+        else:
+            _mode = "dfs" if use_dfs else "bfs"
+            _result = _query_graph_text(
+                G,
+                question,
+                mode=_mode,
+                depth=2,
+                token_budget=budget,
+                context_filters=context_filters,
+                graph_path=str(gp),
+            )
         querylog.log_query(
             kind="query",
             question=question,
@@ -1850,6 +1861,58 @@ def dispatch_command(cmd: str) -> None:
         )
         _touch_query_stamp(gp)
 
+    elif cmd == "callers":
+        if len(sys.argv) < 3:
+            print('Usage: graphify callers "<node>" [--graph path]', file=sys.stderr)
+            sys.exit(1)
+        from graphify.ext.query.callers import direct_callers_text
+        from networkx.readwrite import json_graph
+
+        label = sys.argv[2]
+        graph_path = _default_graph_path()
+        args = sys.argv[3:]
+        for i, a in enumerate(args):
+            if a == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            sys.exit(1)
+        _enforce_graph_size_cap_or_exit(gp)
+        _raw = json.loads(gp.read_text(encoding="utf-8"))
+        if "links" not in _raw and "edges" in _raw:
+            _raw = dict(_raw, links=_raw["edges"])
+        _raw = {**_raw, "directed": True}
+        # Preserve true call direction markers when present (#2309).
+        _raw = dict(
+            _raw,
+            links=[
+                {
+                    **link,
+                    "_src": link.get("_src", link.get("source")),
+                    "_tgt": link.get("_tgt", link.get("target")),
+                }
+                for link in _raw.get("links", [])
+            ],
+        )
+        try:
+            G = json_graph.node_link_graph(_raw, edges="links")
+        except TypeError:
+            G = json_graph.node_link_graph(_raw)
+        result = direct_callers_text(G, label)
+        if result.startswith("Ambiguous:"):
+            print(result)
+            sys.exit(1)
+        print(result)
+        from graphify import querylog
+        querylog.log_query(
+            kind="callers",
+            question=label,
+            corpus=str(gp),
+            result=result,
+        )
+        _touch_query_stamp(gp)
+
     elif cmd == "diagnose":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         if subcmd != "multigraph":
@@ -2060,7 +2123,8 @@ def dispatch_command(cmd: str) -> None:
                 i_arg += 1
         if watch_path is None:
             watch_path = Path(".")
-        graph_json = graph_override if graph_override is not None else watch_path / _GRAPHIFY_OUT / "graph.json"
+        out = graphify_out_for_watch(watch_path)
+        graph_json = graph_override if graph_override is not None else out / "graph.json"
         if not graph_json.exists():
             print(
                 f"error: no graph found at {graph_json} — run /graphify first",
@@ -2128,11 +2192,13 @@ def dispatch_command(cmd: str) -> None:
         # before re-clustering (#934) — fall back to the CWD's graphify-out/,
         # which is the restore-into-place workflow that test pins. The default
         # (no --graph) case already has graph_json under watch_path/graphify-out.
+        # Fork: the fallback resolves GRAPHIFY_OUT at call time via
+        # graphify_out_for_watch() instead of the import-time constant.
         _out_name = Path(_GRAPHIFY_OUT).name
         if graph_override is not None and graph_json.parent.name == _out_name:
             out = graph_json.parent
         else:
-            out = watch_path / _GRAPHIFY_OUT
+            out = graphify_out_for_watch(watch_path)
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
         existing_labels: dict[int, str] = {}
@@ -4731,6 +4797,94 @@ def dispatch_command(cmd: str) -> None:
         from graphify.paths import write_json_atomic as _wja
         _wja(out_path2, merged2, ensure_ascii=False)
         print(f"Merged: {len(merged2['nodes'])} nodes, {len(merged2['edges'])} edges")
+
+    elif cmd == "label" and "--heuristic" in sys.argv:
+        from graphify.heuristic_labels import apply_heuristic_labels
+
+        watch_path = Path(".")
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        out = graphify_out_for_watch(watch_path)
+        apply_heuristic_labels(
+            out,
+            project_root=watch_path,
+            force="--force" in sys.argv,
+            if_generic="--if-generic" in sys.argv,
+            skip_html="--no-viz" in sys.argv,
+        )
+        print(f"Done - heuristic labels written to {out}")
+
+    elif cmd == "enrich":
+        from graphify.enrich import apply_enrich
+
+        watch_path = Path(".")
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        only_folder = (
+            "--folder-links" in sys.argv
+            and "--pytest" not in sys.argv
+            and "--all" not in sys.argv
+        )
+        only_pytest = (
+            "--pytest" in sys.argv
+            and "--folder-links" not in sys.argv
+            and "--all" not in sys.argv
+        )
+        folder_links = not only_pytest
+        pytest_enrich = not only_folder
+        out = graphify_out_for_watch(watch_path)
+        counts = apply_enrich(
+            out,
+            watch_path.resolve(),
+            folder_links=folder_links,
+            pytest=pytest_enrich,
+        )
+        print(f"Done - enrich: {counts}")
+
+    elif cmd == "viz":
+        from graphify.viz_layers import emit_default_html, emit_test_files_html
+
+        watch_path = Path(".")
+        output_path: Path | None = None
+        args = sys.argv[2:]
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a == "-o" and i_arg + 1 < len(args):
+                output_path = Path(args[i_arg + 1])
+                i_arg += 2
+            elif a.startswith("--"):
+                i_arg += 1
+            elif watch_path == Path("."):
+                watch_path = Path(a)
+                i_arg += 1
+            else:
+                i_arg += 1
+        out = graphify_out_for_watch(watch_path)
+        graph_path = out / "graph.json"
+        if "--test-files-only" in sys.argv:
+            emit_test_files_html(graph_path, output_path or out / "graph-tests.html")
+        else:
+            emit_default_html(graph_path, output_path or out / "graph.html")
+        print(f"Done - viz written under {out}")
 
     elif Path(cmd).exists() or cmd in (".", "..") or cmd.startswith(("./", "../", "/", "~")):
         # User ran `graphify <path>` directly — treat as `graphify extract <path>`.

@@ -23,6 +23,7 @@ except Exception:
 # Defined once in graphify.paths so the security/callflow path guards honour the
 # same override (#1423).
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT
+from graphify.ext.skill_scope import skill_version_check_targets
 
 # Install/uninstall subsystem moved to graphify/install.py; re-exported here so
 # `from graphify.__main__ import <name>` keeps working unchanged.
@@ -497,6 +498,9 @@ def main() -> None:
         sys.stdout.flush()
     except BrokenPipeError:
         _silence_broken_pipe()
+    except KeyboardInterrupt:
+        # User/agent Ctrl+C during long update/extract — exit 130 without traceback (#ODS).
+        sys.exit(130)
     except OSError as exc:
         # Windows surfaces a write to a closed pipe as OSError(EINVAL) rather than
         # BrokenPipeError; EPIPE is the POSIX form when it slips past the above.
@@ -522,7 +526,7 @@ def _run_cli() -> None:
         # Resolve each platform's real user-scope destination so per-platform
         # overrides (gemini, opencode, devin, antigravity, amp) check the dir
         # they actually install into, not the bare cfg['skill_dst'].
-        for skill_dst in {_platform_skill_destination(name) for name in _PLATFORM_CONFIG}:
+        for skill_dst in skill_version_check_targets():
             _check_skill_version(skill_dst)
 
     if len(sys.argv) >= 2 and sys.argv[1] in ("-v", "--version", "version"):
@@ -735,6 +739,15 @@ def _run_cli() -> None:
         return
 
     cmd = sys.argv[1]
+
+    _LEGACY_ALIASES = {
+        "label-communities": ("label", ["--heuristic"]),
+        "folder-edges": ("enrich", ["--folder-links"]),
+    }
+    if cmd in _LEGACY_ALIASES:
+        new_cmd, inject = _LEGACY_ALIASES[cmd]
+        sys.argv = [sys.argv[0], new_cmd, *inject, *sys.argv[2:]]
+        cmd = new_cmd
 
     # Universal help guard: -h/--help/-? anywhere after the command shows help
     # and stops — prevents flags from silently triggering destructive subcommands

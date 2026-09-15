@@ -16,7 +16,11 @@ from pathlib import Path
 # shared-output setups. Accepts a relative name ("graphify-out-feature") or an
 # absolute path ("/shared/graphify-out"). Single source of truth in graphify.paths
 # (#1423); re-exported here as _GRAPHIFY_OUT for the existing call sites.
+# Fork: the call sites below resolve through graphify_out_dir() (call-time, so a
+# GRAPHIFY_OUT set after import still applies); the import above is kept as the
+# upstream re-export. graphify_out_rel() is the fork's canonical accessor.
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT
+from graphify.paths import graphify_out_dir, graphify_out_rel
 from graphify.paths import os_replace_with_fallback as _os_replace_with_fallback
 
 # AST cache entries are the output of graphify's own extractor code, so they
@@ -321,8 +325,7 @@ def _stat_key_to_absolute(key: str, anchor: Path) -> str:
 
 
 def _stat_index_file(root: Path) -> Path:
-    _out = Path(_GRAPHIFY_OUT)
-    base = _out if _out.is_absolute() else Path(root).resolve() / _out
+    base = graphify_out_dir(root)
     return base / "cache" / "stat-index.json"
 
 
@@ -950,8 +953,7 @@ def cache_dir(root: Path = Path("."), kind: str = "ast",
     Omitting it yields the historical flat layout, where entries of unknown
     vintage live.
     """
-    _out = Path(_GRAPHIFY_OUT)
-    base = _out if _out.is_absolute() else Path(root).resolve() / _out
+    base = graphify_out_dir(root)
     d = base / "cache" / kind
     if kind == "ast":
         d = d / f"v{_EXTRACTOR_VERSION}-s{_AST_CACHE_SCHEMA}"
@@ -1142,7 +1144,7 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
 
 def cached_files(root: Path = Path(".")) -> set[str]:
     """Return set of file hashes that have a valid cache entry (any kind)."""
-    base = Path(root).resolve() / _GRAPHIFY_OUT / "cache"
+    base = graphify_out_dir(root) / "cache"
     hashes: set[str] = set()
     # Legacy flat entries
     if base.is_dir():
@@ -1161,7 +1163,7 @@ def cached_files(root: Path = Path(".")) -> set[str]:
 def clear_cache(root: Path = Path(".")) -> None:
     """Delete all cache entries (ast/, semantic/, semantic-deep/, and legacy
     flat entries)."""
-    base = Path(root).resolve() / _GRAPHIFY_OUT / "cache"
+    base = graphify_out_dir(root) / "cache"
     # Legacy flat entries
     if base.is_dir():
         for f in base.glob("*.json"):
@@ -1212,8 +1214,7 @@ def prune_semantic_cache(root: Path, live_hashes: set[str]) -> int:
     failure mode is benign — a surviving orphan costs only one re-extraction of
     one doc on a future run, never incorrect output.
     """
-    _out = Path(_GRAPHIFY_OUT)
-    base = _out if _out.is_absolute() else Path(root).resolve() / _out
+    base = graphify_out_dir(root)
     pruned = 0
     for kind in ("semantic", "semantic-deep"):
         semantic_dir = base / "cache" / kind

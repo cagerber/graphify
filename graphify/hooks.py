@@ -36,8 +36,9 @@ if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "$_GFY_PROBE" 2>/dev/
 fi
 # Second probe: read graphify-out/.graphify_python (written by the skill and
 # CLI; survives uv-tool reinstalls and is the same source the README documents).
+# Fork: honour the GRAPHIFY_OUT override — the file can live under a custom out dir.
 if [ -z "$GRAPHIFY_PYTHON" ]; then
-    _GFY_PYTHON_FILE="graphify-out/.graphify_python"
+    _GFY_PYTHON_FILE="${GRAPHIFY_OUT:-graphify-out}/.graphify_python"
     if [ -f "$_GFY_PYTHON_FILE" ]; then
         _FROM_FILE=$(cat "$_GFY_PYTHON_FILE" 2>/dev/null | tr -d '[:space:]')
         case "$_FROM_FILE" in
@@ -183,8 +184,12 @@ try:
             _watchdog.start()
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
     _root = Path('.')
+    # Fork: the output dir is resolved at call time through the canonical helper
+    # (GRAPHIFY_OUT honoured, absolute-aware). The helper import lives INSIDE this
+    # snippet because tests/test_hooks.py exec's it with only Path/os in scope.
+    from graphify.paths import graphify_out_dir
     _out = os.environ.get('GRAPHIFY_OUT', 'graphify-out')
-    _saved = Path(_out) / '.graphify_root'
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
@@ -258,8 +263,12 @@ try:
     # (no changed_paths) is correct here. The flock inside _rebuild_code still
     # prevents pile-ups when commit + checkout fire back-to-back.
     _root = Path('.')
+    # Fork: the output dir is resolved at call time through the canonical helper
+    # (GRAPHIFY_OUT honoured, absolute-aware). The helper import lives INSIDE this
+    # snippet because tests/test_hooks.py exec's it with only Path/os in scope.
+    from graphify.paths import graphify_out_dir
     _out = os.environ.get('GRAPHIFY_OUT', 'graphify-out')
-    _saved = Path(_out) / '.graphify_root'
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
@@ -398,6 +407,8 @@ if [ -n "${WINDIR:-}" ] || [ -n "${MSYSTEM:-}" ]; then
     export GRAPHIFY_MAX_WORKERS="${GRAPHIFY_MAX_WORKERS:-1}"
 fi
 
+_GFY_OUT="${GRAPHIFY_OUT:-graphify-out}"
+
 # Skip during rebase/merge/cherry-pick to avoid blocking --continue with unstaged changes
 # git exports GIT_DIR to hooks; the rev-parse fallback only runs when invoked by
 # hand (each git exec costs 1s+ on AV-scanned Windows machines).
@@ -416,7 +427,8 @@ if [ -z "$CHANGED" ]; then
 fi
 
 # Skip when only graphify-out/ artifacts changed (avoids rebuild loop when graph outputs are tracked in git)
-_NON_GRAPH=$(echo "$CHANGED" | grep -v '^graphify-out/' || true)
+# Fork: the configured out dir is used instead of the literal name.
+_NON_GRAPH=$(echo "$CHANGED" | grep -v "^${_GFY_OUT}/" || true)
 if [ -z "$_NON_GRAPH" ]; then
     exit 0
 fi
@@ -455,6 +467,8 @@ if [ -n "${WINDIR:-}" ] || [ -n "${MSYSTEM:-}" ]; then
     export GRAPHIFY_MAX_WORKERS="${GRAPHIFY_MAX_WORKERS:-1}"
 fi
 
+_GFY_OUT="${GRAPHIFY_OUT:-graphify-out}"
+
 PREV_HEAD=$1
 NEW_HEAD=$2
 BRANCH_SWITCH=$3
@@ -465,11 +479,12 @@ if [ "$BRANCH_SWITCH" != "1" ]; then
 fi
 
 # A no-op checkout (e.g. `git checkout -b` with no start point) reports a
-# branch switch but leaves the tree unchanged ΓÇö nothing to rebuild (#2421).
+# branch switch but leaves the tree unchanged — nothing to rebuild (#2421).
 [ "$PREV_HEAD" = "$NEW_HEAD" ] && exit 0
 
 # Only run if graphify-out/ exists (graph has been built before)
-if [ ! -d "graphify-out" ]; then
+# Fork: the configured out dir is used instead of the literal name.
+if [ ! -d "$_GFY_OUT" ]; then
     exit 0
 fi
 

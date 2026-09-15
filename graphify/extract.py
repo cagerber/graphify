@@ -62,6 +62,11 @@ from graphify.extractors.verilog import extract_verilog  # noqa: F401
 from graphify.extractors.zig import extract_zig  # noqa: F401
 from graphify.security import sanitize_metadata
 from graphify.paths import disambiguate_ambiguous_candidates
+from graphify.ext.extract.consumer import (
+    extract_consumer_owned,
+    is_consumer_owned_suffix,
+    merge_extraction_results,
+)
 
 from graphify.extractors.models import LanguageConfig, _JS_CACHE_BYPASS_SUFFIXES, _NamespaceExportFact, _StarExportFact, _SymbolAliasFact, _SymbolDeclarationFact, _SymbolExportFact, _SymbolImportFact, _SymbolResolutionFacts, _SymbolUseFact, _WORKSPACE_PACKAGE_CACHE  # noqa: E402,F401
 
@@ -1688,6 +1693,10 @@ def extract_python(path: Path) -> dict:
     result = _extract_generic(path, _PYTHON_CONFIG)
     if "error" not in result:
         _extract_python_rationale(path, result)
+    if "error" not in result:
+        from graphify.node_kind import finalize_node_kinds
+
+        finalize_node_kinds(result["nodes"])
     return result
 
 
@@ -6048,8 +6057,48 @@ def _is_cpp_header(path: Path) -> bool:
     return any(marker in head for marker in _CPP_HEADER_MARKERS)
 
 
+def _bypass_ast_cache(path: Path) -> bool:
+    """Skip AST cache when built-in rules require it or a consumer extractor owns the path."""
+    if path.suffix in _JS_CACHE_BYPASS_SUFFIXES:
+        return True
+    try:
+        from graphify.ext.extract.registry import resolve_consumer_extractors
+
+        return bool(resolve_consumer_extractors(path))
+    except ImportError:
+        return False
+
+
+def _get_extractors(path: Path) -> list[Any]:
+    """Return all extractors for *path* (consumer rules, then built-in dispatch)."""
+    if path.name.lower().endswith(".blade.php"):
+        return [extract_blade]
+    if is_mcp_config_path(path):
+        return [extract_mcp_config]
+    if is_package_manifest_path(path):
+        return [extract_package_manifest]
+    try:
+        from graphify.ext.extract.registry import resolve_consumer_extractors
+
+        consumers = resolve_consumer_extractors(path)
+        if consumers:
+            return consumers
+    except ImportError:
+        pass
+    if is_consumer_owned_suffix(path):
+        # The consumer declares this suffix but no rule matched this path: never
+        # fall through to a built-in extractor for another language (upstream maps
+        # .cls to Apex), which would emit wrong-language nodes for a file the
+        # consumer owns. The stub returns no nodes plus an actionable error.
+        return [extract_consumer_owned]
+    builtin = _get_extractor(path)
+    return [builtin] if builtin is not None else []
+
+
 def _get_extractor(path: Path) -> Any | None:
     """Return the correct extractor function for a file, or None if unsupported."""
+    # Fork: built-in dispatch only — consumer [[tool.graphify.extractors]] rules
+    # are applied by _get_extractors(), which wraps this.
     if path.name.lower().endswith(".blade.php"):
         return extract_blade
     # MCP config files (.mcp.json, claude_desktop_config.json, ...) are routed
@@ -6094,6 +6143,11 @@ def _get_extractor(path: Path) -> Any | None:
     return _DISPATCH.get(suffix)
 
 
+def _path_has_extractor(path: Path) -> bool:
+    """True when built-in or consumer ``[[tool.graphify.extractors]]`` covers *path*."""
+    return bool(_get_extractors(path))
+
+
 def _safe_extract_with_xaml_root(extractor, path: Path, root: Path) -> dict:
     global _XAML_ACTIVE_EXTRACT_ROOT
     previous_root = _XAML_ACTIVE_EXTRACT_ROOT
@@ -6128,7 +6182,7 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     root = Path(root_str)
     cache_location = Path(cache_location_str)
     _raise_recursion_limit()
-    bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+    bypass_cache = _bypass_ast_cache(path)
 
     # Check cache first (avoid re-extraction)
     if not bypass_cache:
@@ -6136,11 +6190,15 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
         if cached is not None:
             return idx, cached
 
-    extractor = _get_extractor(path)
-    if extractor is None:
+    extractors = _get_extractors(path)
+    if not extractors:
         return idx, {"nodes": [], "edges": []}
 
-    result = _safe_extract_with_xaml_root(extractor, path, root)
+    if len(extractors) > 1:
+        results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
+        result = merge_extraction_results(results)
+    else:
+        result = _safe_extract_with_xaml_root(extractors[0], path, root)
     # Never cache a zero-node result for an extractable file. Every supported
     # source produces at least a file node, so an empty node list is anomalous
     # (e.g. a transient batch/parallel hiccup). Caching it makes the empty
@@ -6149,6 +6207,18 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     if not bypass_cache and "error" not in result and result.get("nodes"):
         save_cached(path, result, root, cache_root=cache_location)
     return idx, result
+
+
+def _ast_progress_interval(total_files: int) -> int:
+    """Print cadence for AST extraction progress (``GRAPHIFY_AST_PROGRESS_INTERVAL``)."""
+    raw = os.environ.get("GRAPHIFY_AST_PROGRESS_INTERVAL", "1000").strip()
+    try:
+        interval = int(raw)
+    except ValueError:
+        interval = 1000
+    if interval <= 0:
+        interval = 1000
+    return min(interval, max(total_files, 1))
 
 
 def _extract_parallel(
@@ -6211,7 +6281,7 @@ def _extract_parallel(
 
     done_count = 0
     failed: list[int] = []  # positions into uncached_work whose future failed
-    _PROGRESS_INTERVAL = 100
+    _PROGRESS_INTERVAL = _ast_progress_interval(total_files)
     try:
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
             futures = {
@@ -6302,7 +6372,7 @@ def _extract_sequential(
     cache_location: Path | None = None,
 ) -> None:
     """Extract uncached files sequentially (fallback for small batches)."""
-    _PROGRESS_INTERVAL = 100
+    _PROGRESS_INTERVAL = _ast_progress_interval(total_files)
     for work_idx, (idx, path) in enumerate(uncached_work):
         if (
             total_files >= _PROGRESS_INTERVAL
@@ -6313,13 +6383,17 @@ def _extract_sequential(
                 f"  AST extraction: {work_idx}/{len(uncached_work)} uncached files ({work_idx * 100 // len(uncached_work)}%)",
                 flush=True,
             )
-        extractor = _get_extractor(path)
-        if extractor is None:
+        extractors = _get_extractors(path)
+        if not extractors:
             per_file[idx] = {"nodes": [], "edges": []}
             continue
-        bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+        bypass_cache = _bypass_ast_cache(path)
         # XAML boundary anchors on `root` (the corpus), not the cache location.
-        result = _safe_extract_with_xaml_root(extractor, path, root)
+        if len(extractors) > 1:
+            results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
+            result = merge_extraction_results(results)
+        else:
+            result = _safe_extract_with_xaml_root(extractors[0], path, root)
         # See _extract_single_file: don't cache an anomalous zero-node result (#1666).
         if not bypass_cache and "error" not in result and result.get("nodes"):
             save_cached(path, result, root, cache_root=cache_location)
@@ -6448,10 +6522,10 @@ def extract(
     uncached_work: list[tuple[int, Path]] = []
 
     for i, path in enumerate(paths):
-        if _get_extractor(path) is None:
+        if not _get_extractors(path):
             per_file[i] = {"nodes": [], "edges": []}
             continue
-        bypass_cache = path.suffix in _JS_CACHE_BYPASS_SUFFIXES
+        bypass_cache = _bypass_ast_cache(path)
         if not bypass_cache:
             cached = load_cached(path, root, cache_root=cache_location)
             if cached is not None:
@@ -6494,7 +6568,7 @@ def extract(
         _res = per_file[i] or {}
         if _res.get("nodes") or _res.get("error") or _res.get("skipped"):
             continue
-        if _get_extractor(_p) is not None:
+        if _path_has_extractor(_p):
             _empty_sources.append(str(_p))
     if _empty_sources:
         _shown = ", ".join(Path(x).name for x in _empty_sources[:5])
@@ -6530,7 +6604,7 @@ def extract(
             # it failed keeps it out of the incremental manifest and re-queues
             # it on every subsequent run, forever (#2879).
             continue
-        if (not _res.get("nodes")) and _get_extractor(_p) is not None:
+        if (not _res.get("nodes")) and _path_has_extractor(_p):
             if _key not in _failed_seen:
                 _failed_sources.append(_key)
                 _failed_seen.add(_key)
@@ -6544,7 +6618,7 @@ def extract(
     _no_extractor: dict[str, int] = {}
     for _p in paths:
         _ext = _p.suffix.lower()
-        if _ext in _CODE_EXTS and _get_extractor(_p) is None:
+        if _ext in _CODE_EXTS and not _path_has_extractor(_p):
             _no_extractor[_ext] = _no_extractor.get(_ext, 0) + 1
     if _no_extractor:
         _by_count = ", ".join(

@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from graphify.paths import graphify_out_dir, graphify_out_for_watch, graphify_out_rel, skip_dir_names
+from graphify.enrich import topology_for_compare
 # Single source of truth in graphify.paths (#1423); re-exported as _GRAPHIFY_OUT.
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT, is_absolute_any_platform
 
@@ -1347,7 +1349,7 @@ def _rebuild_code(
     if not _stabilize_rebuild_cwd(watch_path):
         return False
 
-    out = watch_path / _GRAPHIFY_OUT
+    out = graphify_out_for_watch(watch_path)
     if acquire_lock:
         # #1059: incremental (changed_paths is not None) hooks must not drop
         # their change set when another rebuild is already running. Queue
@@ -1704,6 +1706,14 @@ def _rebuild_code(
         }
         _rebase_relative_source_files(result, watch_root, project_root)
 
+        from graphify.ext.extract.post import merge_consumer_kg_extensions
+
+        result = merge_consumer_kg_extensions(
+            result,
+            project_root=project_root,
+            full_rebuild=changed_paths is None,
+        )
+
         # #2543: AST sources that failed this run (error result, or extractor
         # present but zero nodes) must not be stamped kind="ast" below, and any
         # prior stamp must be blanked (clear_ast) — otherwise the incremental
@@ -1901,8 +1911,8 @@ def _rebuild_code(
         if existing_graph_data:
             try:
                 same_topology = (
-                    json.dumps(_canonical_topology_for_compare(existing_graph_data), sort_keys=True, ensure_ascii=False)
-                    == json.dumps(_canonical_topology_for_compare(candidate_topology), sort_keys=True, ensure_ascii=False)
+                    json.dumps(topology_for_compare(existing_graph_data), sort_keys=True, ensure_ascii=False)
+                    == json.dumps(topology_for_compare(candidate_topology), sort_keys=True, ensure_ascii=False)
                 )
             except Exception:
                 same_topology = False
@@ -2088,6 +2098,15 @@ def _rebuild_code(
         # remains retryable from the unchanged-topology fast path.
         html_written = False
         if not no_change:
+            try:
+                from graphify.enrich import apply_post_build_enrich
+
+                enrich_result = apply_post_build_enrich(out, project_root)
+                if enrich_result:
+                    print(f"[graphify watch] Post-build enrich: {enrich_result}")
+            except Exception as enrich_err:
+                print(f"[graphify watch] Post-build enrich skipped: {enrich_err}")
+
             html_action = _reconcile_graph_html(out, candidate_graph_data)
             html_written = html_action == "rendered"
 
@@ -2130,7 +2149,7 @@ def check_update(watch_path: Path) -> bool:
     re-extraction via `/graphify --update` — this function only signals
     that the update is needed.
     """
-    flag = Path(watch_path) / _GRAPHIFY_OUT / "needs_update"
+    flag = graphify_out_for_watch(watch_path) / "needs_update"
     if flag.exists():
         print(f"[graphify check-update] Pending non-code changes in {watch_path}.")
         print("[graphify check-update] Run `/graphify --update` to apply semantic re-extraction.")
@@ -2139,7 +2158,7 @@ def check_update(watch_path: Path) -> bool:
 
 def _notify_only(watch_path: Path) -> None:
     """Write a flag file and print a notification (fallback for non-code-only corpora)."""
-    flag = watch_path / _GRAPHIFY_OUT / "needs_update"
+    flag = graphify_out_for_watch(watch_path) / "needs_update"
     flag.parent.mkdir(parents=True, exist_ok=True)
     flag.write_text("1", encoding="utf-8")
     print(f"\n[graphify watch] New or changed files detected in {watch_path}")
@@ -2249,7 +2268,7 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
                 filter_parts = path.parts
             if any(part.startswith(".") for part in filter_parts):
                 return
-            if _GRAPHIFY_OUT in filter_parts:
+            if skip_dir_names() & set(filter_parts):
                 return
             last_trigger = time.monotonic()
             pending = True

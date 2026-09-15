@@ -285,7 +285,9 @@ def test_label_communities_batches_when_over_batch_size(monkeypatch):
     labels = label_communities(G, communities, backend="gemini", batch_size=100, max_concurrency=1)
 
     # 250 communities / 100 per batch -> 3 batches (100, 100, 50)
-    assert calls == [100, 100, 50]
+    # Fork: the batch ORDER depends on community dict iteration (PYTHONHASHSEED),
+    # so compare the multiset, not the sequence.
+    assert sorted(calls) == [50, 100, 100]
     # And every community got a real name, none left as a placeholder.
     assert all(name.startswith("Cluster ") for name in labels.values()), \
         f"some communities still have placeholders: {[k for k, v in labels.items() if not v.startswith('Cluster ')][:5]}"
@@ -649,8 +651,12 @@ def test_cluster_only_marks_html_stale_before_report_generation(
         ["graphify", "cluster-only", str(tmp_path), "--no-label"],
     )
 
-    with pytest.raises(KeyboardInterrupt):
+    # Fork: main() turns an interrupt into exit 130 (no traceback) — see
+    # tests/test_cli_keyboard_interrupt.py. The repairability invariant below is
+    # unchanged: the marker must already be on disk when the interrupt lands.
+    with pytest.raises(SystemExit) as exc:
         cli.main()
+    assert exc.value.code == 130
 
     marker = out / ".graph.html.stale"
     assert html.read_text(encoding="utf-8") == "previous visualization"

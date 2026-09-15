@@ -19,7 +19,15 @@ from graphify.google_workspace import (
     convert_google_workspace_file,
     google_workspace_enabled,
 )
-from graphify.paths import GRAPHIFY_OUT, out_path
+from graphify.config import consumer_code_extensions
+from graphify.paths import (
+    GRAPHIFY_OUT,
+    GRAPHIFY_OUT_NAME,
+    graphify_out_dir,
+    manifest_path as _resolve_manifest_path,
+    out_path,
+    skip_dir_names,
+)
 
 
 class FileType(str, Enum):
@@ -41,7 +49,10 @@ _MANIFEST_PATH = str(out_path("manifest.json"))
 _MTIME_COARSE_S = 2.0
 _MTIME_SUBSECOND_S = 0.05
 
-CODE_EXTENSIONS = {'.py', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.ejs', '.ets', '.go', '.rs', '.java', '.groovy', '.gradle', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.cu', '.cuh', '.metal', '.rb', '.rake', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.luau', '.toc', '.zig', '.ps1', '.psm1', '.psd1', '.ex', '.exs', '.m', '.mm', '.ml', '.mli', '.jl', '.vue', '.svelte', '.astro', '.dart', '.v', '.sv', '.svh', '.sql', '.r', '.f', '.F', '.f90', '.F90', '.f95', '.F95', '.f03', '.F03', '.f08', '.F08', '.pas', '.pp', '.dpr', '.dpk', '.lpr', '.inc', '.dfm', '.lfm', '.lpk', '.sh', '.bash', '.json', '.tf', '.tfvars', '.hcl', '.dm', '.dme', '.dmi', '.dmm', '.dmf', '.sln', '.slnx', '.csproj', '.fsproj', '.vbproj', '.xaml', '.razor', '.cshtml', '.cls', '.trigger', '.lisp', '.cl', '.lsp', '.asd', '.robot', '.resource'}
+# Fork: the consumer's own declared code suffixes (extractor rules +
+# [tool.graphify] code_extensions) are added on top of the built-in set, so
+# code detection agrees with extraction by construction.
+CODE_EXTENSIONS = {'.py', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.ejs', '.ets', '.go', '.rs', '.java', '.groovy', '.gradle', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.cu', '.cuh', '.metal', '.rb', '.rake', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.luau', '.toc', '.zig', '.ps1', '.psm1', '.psd1', '.ex', '.exs', '.m', '.mm', '.ml', '.mli', '.jl', '.vue', '.svelte', '.astro', '.dart', '.v', '.sv', '.svh', '.sql', '.r', '.f', '.F', '.f90', '.F90', '.f95', '.F95', '.f03', '.F03', '.f08', '.F08', '.pas', '.pp', '.dpr', '.dpk', '.lpr', '.inc', '.dfm', '.lfm', '.lpk', '.sh', '.bash', '.json', '.tf', '.tfvars', '.hcl', '.dm', '.dme', '.dmi', '.dmm', '.dmf', '.sln', '.slnx', '.csproj', '.fsproj', '.vbproj', '.xaml', '.razor', '.cshtml', '.cls', '.trigger', '.lisp', '.cl', '.lsp', '.asd', '.robot', '.resource'} | consumer_code_extensions()
 DOC_EXTENSIONS = {'.md', '.mdx', '.qmd', '.skill', '.txt', '.rst', '.html', '.yaml', '.yml'}
 PAPER_EXTENSIONS = {'.pdf'}
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
@@ -978,7 +989,7 @@ def _has_venv_markers(d: "Path") -> bool:
 
 def _is_noise_dir(part: str, parent: "Path | None" = None) -> bool:
     """Return True if this directory name looks like a venv, cache, or dep dir."""
-    if part in _SKIP_DIRS:
+    if part in _SKIP_DIRS or part in skip_dir_names():
         return True
     if part in ("env", ".env") or part.endswith("_env"):
         # Ambiguous: a real venv OR a real source dir. Prune only on actual venv
@@ -1807,7 +1818,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         )
 
     # Always include graphify-out/memory/ - query results filed back into the graph
-    memory_dir = root / GRAPHIFY_OUT / "memory"
+    # Fork: the configured out dir (graphify_out_rel) instead of the literal name.
+    memory_dir = graphify_out_dir(root) / "memory"
     scan_paths = [root]
     if memory_dir.exists():
         scan_paths.append(memory_dir)
@@ -1914,8 +1926,11 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
 
     all_files.sort(key=lambda p: str(p))
 
+    # Converted docs land in the *cache* root's output dir when one is given,
+    # so detect() never mutates the scanned corpus tree (#2787). Env-aware
+    # GRAPHIFY_OUT is preserved via graphify_out_dir().
     out_base = Path(cache_root).resolve() if cache_root is not None else root
-    converted_dir = out_base / GRAPHIFY_OUT / "converted"
+    converted_dir = graphify_out_dir(out_base) / "converted"
 
     for p in all_files:
         # For memory dir files, skip hidden/noise filtering
@@ -2156,7 +2171,7 @@ def _to_absolute_from_storage(key: str, root: Path) -> str:
 
 
 def load_manifest(
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     root: Path | None = None,
 ) -> dict:
@@ -2171,6 +2186,8 @@ def load_manifest(
     Keys are NFC-normalized on load so a manifest written under one Unicode
     form still matches a scan that yields the other (#2221).
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     try:
         raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     except Exception:
@@ -2184,7 +2201,7 @@ def load_manifest(
 
 def save_manifest(
     files: dict[str, list[str]],
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     kind: str = "both",
     root: Path | None = None,
@@ -2232,6 +2249,8 @@ def save_manifest(
     re-queues the file after the failure is fixed, without deleting
     graphify-out/.
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     existing = load_manifest(manifest_path, root=root)
 
     # Index both raw and NFC forms so scan/clear membership survives the
@@ -2438,7 +2457,7 @@ def _mtime_may_hide_a_rewrite(current_mtime: float, stored: dict) -> bool:
 
 def detect_incremental(
     root: Path,
-    manifest_path: str = _MANIFEST_PATH,
+    manifest_path: str | None = None,
     *,
     follow_symlinks: bool | None = None,
     google_workspace: bool | None = None,
@@ -2468,6 +2487,8 @@ def detect_incremental(
     runs. ``None`` (default) does not follow symlinked directories; callers must
     opt in explicitly, and resolved targets outside the scan root are skipped.
     """
+    if manifest_path is None:
+        manifest_path = _resolve_manifest_path(root)
     full = detect(
         root,
         follow_symlinks=follow_symlinks,

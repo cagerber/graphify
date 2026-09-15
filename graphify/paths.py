@@ -13,6 +13,13 @@ once at import time, matching the previous per-module constants — set
 ``GRAPHIFY_OUT`` before the process starts (the normal worktree/shared-output
 flow) and every reader honours it.
 """
+# Fork: resolution is call-time, not import-time (see ``graphify_out_rel`` /
+# ``graphify_out_dir``), so a consumer that sets GRAPHIFY_OUT after import — e.g.
+# ``.local/graphify-out`` per checkout — is still honoured. A module-level
+# assignment would shadow the lazy attributes, so ``GRAPHIFY_OUT`` /
+# ``GRAPHIFY_OUT_NAME`` are served by the PEP 562 ``__getattr__`` at the bottom of
+# this module instead of being assigned here, and ``out_path`` /
+# ``default_graph_json`` take an optional ``root`` to anchor a relative override.
 
 from __future__ import annotations
 
@@ -23,7 +30,7 @@ import stat
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+_DEFAULT_REL = "graphify-out"
 
 
 def os_replace_with_fallback(src: "str | Path", dst: "str | Path") -> None:
@@ -353,26 +360,113 @@ def disambiguate_ambiguous_candidates(
 
 # Bare directory name even when GRAPHIFY_OUT is an absolute path. Used by path
 # guards that walk parents looking for the output directory by name.
-GRAPHIFY_OUT_NAME = os.path.basename(os.path.normpath(GRAPHIFY_OUT))
+def graphify_out_rel() -> str:
+    """Relative or absolute output directory from GRAPHIFY_OUT (default graphify-out).
+
+    Precedence: the environment, then an explicitly-assigned module attribute
+    (tests/embedding hosts that ``setattr``), then the default. Reading the env
+    first matters: ``monkeypatch.setattr`` restores the PEP 562 value as a real
+    module attribute on teardown, which would otherwise shadow the env for the
+    rest of the process.
+    """
+    from_env = os.environ.get("GRAPHIFY_OUT")
+    if from_env:
+        return from_env
+    explicit = globals().get("GRAPHIFY_OUT")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    return _DEFAULT_REL
 
 
-def out_path(*parts: str) -> Path:
+def graphify_out_name() -> str:
+    """Bare directory name even when GRAPHIFY_OUT is an absolute path. Used by path
+    guards that walk parents looking for the output directory by name.
+    """
+    return os.path.basename(os.path.normpath(graphify_out_rel()))
+
+
+def graphify_out_dir(root: Path | str | None = None) -> Path:
+    """Resolved output directory under *root* (or cwd when *root* is None)."""
+    rel = graphify_out_rel()
+    out = Path(rel)
+    if out.is_absolute():
+        return out
+    base = Path(root).resolve() if root is not None else Path.cwd()
+    return base / rel
+
+
+def graphify_project_root(watch_path: Path | str | None = None) -> Path:
+    """Repository root for resolving relative ``GRAPHIFY_OUT`` during subpath scans.
+
+    Relative watch paths that resolve *inside* the current directory anchor at
+    cwd (the fork's project-root ``GRAPHIFY_OUT`` — a subdir watch shares the
+    project graph). A relative target that escapes cwd (e.g. ``../other``,
+    watching an external project) is its own root: its manifest and graph must
+    live next to the target, not in the caller's output dir (#2316).
+    """
+    if watch_path is None:
+        return Path.cwd().resolve()
+    wp = Path(watch_path)
+    if wp.is_absolute():
+        return wp.resolve()
+    resolved = wp.resolve()
+    cwd = Path.cwd().resolve()
+    if cwd == resolved or cwd in resolved.parents:
+        return cwd
+    return resolved
+
+
+def graphify_out_for_watch(watch_path: Path | str | None = None) -> Path:
+    """``GRAPHIFY_OUT`` anchored at :func:`graphify_project_root`, not the watch subfolder."""
+    return graphify_out_dir(graphify_project_root(watch_path))
+
+
+def out_path(*parts: str, root: Path | str | None = None) -> Path:
     """A path inside the configured output dir, e.g. ``out_path("cache")``.
 
     ``Path(GRAPHIFY_OUT) / ...`` resolves correctly for both a relative name
     ("graphify-out") and an absolute override ("/shared/graphify-out").
+
+    Fork: resolved at call time through :func:`graphify_out_dir`; *root*
+    anchors a relative override at the caller's project root.
     """
-    return Path(GRAPHIFY_OUT, *parts)
+    return graphify_out_dir(root).joinpath(*parts)
 
 
-def default_graph_json() -> str:
+def manifest_path(root: Path | str | None = None) -> str:
+    return str(graphify_out_dir(root) / "manifest.json")
+
+
+def default_graph_json_path(root: Path | str | None = None) -> str:
+    return str(graphify_out_dir(root) / "graph.json")
+
+
+def default_graph_json(root: Path | str | None = None) -> str:
     """Default ``graph.json`` path under the configured output dir.
 
     The package-wide fallback used by serve/build/benchmark/prs and the CLI read
     commands so a ``GRAPHIFY_OUT`` override is honoured everywhere, not just where
     the path is passed explicitly (#1423).
+
+    Fork: resolved at call time (see ``default_graph_json_path``).
     """
-    return str(out_path("graph.json"))
+    return default_graph_json_path(root)
+
+
+def skip_dir_names() -> frozenset[str]:
+    """Directory basename(s) to skip when scanning source (configured-out top level only).
+
+    Only the *top-level* output dir name is a global skip (e.g. ``graphify-out`` for
+    ``graphify-out/nlp``): deeper parts of the configured output path are pruned by
+    full-path equality in ``detect`` (#2273) and must not name-prune same-named
+    source dirs. Absolute configured outputs contribute no scan-root name.
+    """
+    names = {_DEFAULT_REL}
+    rel = graphify_out_rel()
+    rel_path = Path(rel)
+    if not rel_path.is_absolute() and rel not in (".", ""):
+        names.add(rel_path.parts[0])
+    return frozenset(names)
 
 
 def is_absolute_any_platform(p: "str | Path | None") -> bool:
@@ -498,3 +592,11 @@ def load_node_link_graph(path_or_data):
         return json_graph.node_link_graph(data, edges="links")
     except TypeError:  # networkx too old for the edges kwarg; default is "links"
         return json_graph.node_link_graph(data)
+
+
+def __getattr__(name: str) -> object:
+    if name == "GRAPHIFY_OUT":
+        return graphify_out_rel()
+    if name == "GRAPHIFY_OUT_NAME":
+        return graphify_out_name()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

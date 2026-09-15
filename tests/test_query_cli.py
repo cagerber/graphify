@@ -14,7 +14,16 @@ def _write_graph(tmp_path):
     G.add_node("n1", label="extract", source_file="extract.py", source_location="L10", community=0)
     G.add_node("n2", label="cluster", source_file="cluster.py", source_location="L5", community=0)
     G.add_node("n3", label="build", source_file="build.py", source_location="L1", community=1)
-    G.add_edge("n1", "n2", relation="calls", confidence="EXTRACTED", context="call")
+    # cluster calls extract (inbound to extract); extract imports build via n2→n3
+    G.add_edge(
+        "n2",
+        "n1",
+        relation="calls",
+        confidence="EXTRACTED",
+        context="call",
+        _src="n2",
+        _tgt="n1",
+    )
     G.add_edge("n2", "n3", relation="imports", confidence="EXTRACTED", context="import")
     graph_path = tmp_path / "graph.json"
     graph_path.write_text(json.dumps(json_graph.node_link_data(G, edges="links")))
@@ -36,7 +45,8 @@ def test_query_cli_explicit_context_filter(monkeypatch, tmp_path, capsys):
     assert "build" not in out
 
 
-def test_query_cli_heuristic_context_filter(monkeypatch, tmp_path, capsys):
+def test_query_cli_who_calls_uses_direct_callers_mode(monkeypatch, tmp_path, capsys):
+    """'who calls X' must list inbound callers, not a community BFS dump."""
     graph_path = _write_graph(tmp_path)
     monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
     monkeypatch.setattr(
@@ -46,9 +56,25 @@ def test_query_cli_heuristic_context_filter(monkeypatch, tmp_path, capsys):
     )
     mainmod.main()
     out = capsys.readouterr().out
-    assert "Context: call (heuristic)" in out
+    assert "Direct callers of extract" in out
     assert "cluster" in out
     assert "build" not in out
+    assert "Traversal:" not in out
+
+
+def test_callers_cli(monkeypatch, tmp_path, capsys):
+    graph_path = _write_graph(tmp_path)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+    monkeypatch.setattr(
+        mainmod.sys,
+        "argv",
+        ["graphify", "callers", "extract", "--graph", str(graph_path)],
+    )
+    mainmod.main()
+    out = capsys.readouterr().out
+    assert "Direct callers of extract" in out
+    assert "cluster" in out
+    assert "1 caller edge" in out
 
 
 def _write_calls_graph(tmp_path):
