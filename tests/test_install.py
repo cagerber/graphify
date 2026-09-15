@@ -1454,3 +1454,40 @@ def test_project_uninstall_removes_the_bare_hook_command(tmp_path, monkeypatch):
             main()
 
     assert not [c for c in _hook_commands(settings.read_text(encoding="utf-8")) if "graphify" in c]
+
+
+def test_install_replaces_a_stale_skill_symlink(tmp_path, requires_symlinks):
+    """A dangling symlink at the skill path must not fail the install.
+
+    ``mkdir(parents=True, exist_ok=True)`` forgives an existing directory but not a dangling
+    symlink: ``Path.is_dir()`` follows the link, so a broken link is not a directory and
+    ``os.mkdir`` raises EEXIST. Hit in the wild on a machine whose ``~/.hermes/skills/graphify``
+    pointed into a deleted temporary directory — the install died with
+    ``FileExistsError: [Errno 17]`` and never laid the skill down.
+    """
+    skills = tmp_path / ".hermes" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "graphify").symlink_to(tmp_path / "gone" / "graphify")
+    assert not (skills / "graphify").exists(), "precondition: the link must dangle"
+
+    _install(tmp_path, "hermes")
+
+    assert (skills / "graphify" / "SKILL.md").exists()
+    assert not (skills / "graphify").is_symlink(), "stale link should be replaced by a directory"
+
+
+def test_install_refuses_a_regular_file_at_the_skill_path(tmp_path):
+    """Only a stale link is replaced; anything else at that path is the user's.
+
+    A silent overwrite would trade a visible failed install for invisible data loss.
+    """
+    skills = tmp_path / ".hermes" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "graphify").write_text("mine", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        _install(tmp_path, "hermes")
+
+    assert exc.value.code == 1
+    assert (skills / "graphify").read_text(encoding="utf-8") == "mine"
+    assert not (skills / "graphify").is_dir()

@@ -192,6 +192,37 @@ def _install_skill_references(skill_dst: Path, refs_src: Path) -> None:
         if refs_staged.exists():
             shutil.rmtree(refs_staged, ignore_errors=True)
         raise
+def _mkdir_parent(dst_dir: Path) -> None:
+    """Create *dst_dir*, tolerating a **stale symlink** left behind by a prior install.
+
+    ``mkdir(parents=True, exist_ok=True)`` forgives an existing *directory* but not a dangling
+    symlink: ``Path.is_dir()`` follows the link, so a broken link is not a directory and the
+    underlying ``os.mkdir`` raises ``EEXIST``, failing the whole install. Hit in the wild on a
+    machine whose ``~/.hermes/skills/graphify`` pointed into a deleted temporary directory —
+    ``graphify install --platform hermes`` died with ``FileExistsError: [Errno 17]`` and never
+    laid the skill down.
+
+    A link whose target is gone is stale state, so replace it. A **live** link to a directory is
+    already usable and is left alone. Anything else that occupies the path (a regular file, a link
+    to a file) belongs to the user: refuse loudly rather than silently replace it, because losing
+    a file to a directory-shaped install step is worse than a failed install that says why.
+    """
+    if dst_dir.is_symlink() and not dst_dir.is_dir():
+        target = Path(os.path.realpath(dst_dir))
+        print(
+            f"  stale symlink     ->  {dst_dir} -> {target} (target missing; replaced by a directory)",
+            file=sys.stderr,
+        )
+        dst_dir.unlink()
+    if dst_dir.exists() and not dst_dir.is_dir():
+        print(
+            f"error: {dst_dir} exists and is not a directory - move it aside and retry",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _copy_skill_file(platform_name: str, *, project: bool = False, project_dir: Path | None = None) -> Path:
     """Copy a packaged skill file and write its version stamp.
 
@@ -219,7 +250,7 @@ def _copy_skill_file(platform_name: str, *, project: bool = False, project_dir: 
         sys.exit(1)
 
     skill_dst = _platform_skill_destination(platform_name, project=project, project_dir=project_dir)
-    skill_dst.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(skill_dst.parent)
 
     # Install the references/ sidecar (or clear an orphan one) BEFORE writing
     # SKILL.md, so SKILL.md is the last artifact laid down. An install that is
@@ -375,7 +406,7 @@ def _register_always_on_block(target: Path, prefix: str, registration: str) -> N
                 target.write_text(content.rstrip() + registration, encoding="utf-8")
                 print(f"{prefix}skill registered in {target}")
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
+            _mkdir_parent(target.parent)
             target.write_text(registration.lstrip(), encoding="utf-8")
             print(f"{prefix}created at {target}")
     except OSError as exc:
@@ -683,7 +714,7 @@ def install(platform: str = "claude", *, project: bool = False, project_dir: Pat
             )
             sys.exit(1)
         command_dst = Path.home() / ".config" / "kilo" / "command" / "graphify.md"
-        command_dst.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir_parent(command_dst.parent)
         shutil.copy(command_src, command_dst)
         print(f"  command installed ->  {command_dst}")
 
@@ -824,7 +855,7 @@ def _write_settings_with_backup(settings_path: Path, settings: dict) -> None:
     settings_path.write_text(output, encoding="utf-8")
 def _install_gemini_hook(project_dir: Path, project: bool = False) -> None:
     settings_path = project_dir / ".gemini" / "settings.json"
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(settings_path.parent)
     settings = _read_settings_for_merge(settings_path)
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -895,7 +926,7 @@ def vscode_install(project_dir: Path | None = None) -> None:
         skill_src = Path(__file__).parent / "skill-copilot.md"
         refs_bundle = "copilot"
     skill_dst = Path.home() / ".copilot" / "skills" / "graphify" / "SKILL.md"
-    skill_dst.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(skill_dst.parent)
     tmp_dst = skill_dst.with_suffix(skill_dst.suffix + ".tmp")
     try:
         shutil.copy(skill_src, tmp_dst)
@@ -919,7 +950,7 @@ def vscode_install(project_dir: Path | None = None) -> None:
     print(f"  skill installed  ->  {skill_dst}")
 
     instructions = (project_dir or Path(".")) / ".github" / "copilot-instructions.md"
-    instructions.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(instructions.parent)
     if instructions.exists():
         content = instructions.read_text(encoding="utf-8")
         new_content = _replace_or_append_section(
@@ -1003,7 +1034,7 @@ def _kiro_install(project_dir: Path) -> None:
 
     # Steering file → .kiro/steering/graphify.md (always-on)
     steering_dir = project_dir / ".kiro" / "steering"
-    steering_dir.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(steering_dir)
     steering_dst = steering_dir / "graphify.md"
     if steering_dst.exists() and steering_dst.read_text(encoding="utf-8") == _always_on("kiro-steering"):
         print(f"  .kiro/steering/graphify.md  ->  already configured (no change)")
@@ -1051,7 +1082,7 @@ def _antigravity_finalize(skill_dst: Path, project_dir: Path) -> None:
 
     # .agents/rules/graphify.md
     rules_path = project_dir / _ANTIGRAVITY_RULES_PATH
-    rules_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(rules_path.parent)
     if rules_path.exists():
         existing = rules_path.read_text(encoding="utf-8")
         if _always_on("antigravity-rules").strip() != existing.strip():
@@ -1065,7 +1096,7 @@ def _antigravity_finalize(skill_dst: Path, project_dir: Path) -> None:
 
     # .agents/workflows/graphify.md
     wf_path = project_dir / _ANTIGRAVITY_WORKFLOW_PATH
-    wf_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(wf_path.parent)
     if wf_path.exists():
         existing = wf_path.read_text(encoding="utf-8")
         if _ANTIGRAVITY_WORKFLOW.strip() != existing.strip():
@@ -1159,7 +1190,7 @@ Only use Read/Grep/Glob directly when:
 def _cursor_install(project_dir: Path) -> None:
     """Write .cursor/rules/graphify.mdc with alwaysApply: true."""
     rule_path = (project_dir or Path(".")) / _CURSOR_RULE_PATH
-    rule_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(rule_path.parent)
     if rule_path.exists() and rule_path.read_text(encoding="utf-8") == _CURSOR_RULE:
         print(f"graphify rule at {rule_path} already configured (no change)")
         return
@@ -1196,7 +1227,7 @@ Rules:
 def _devin_rules_install(project_dir: Path) -> None:
     """Write .windsurf/rules/graphify.md for always-on Devin context."""
     rules_path = (project_dir or Path(".")) / _DEVIN_RULES_PATH
-    rules_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(rules_path.parent)
     if rules_path.exists() and rules_path.read_text(encoding="utf-8") == _DEVIN_RULES:
         print(f"  {rules_path}  ->  already configured (no change)")
         return
@@ -1322,13 +1353,13 @@ def _kilo_config_write_path(project_dir: Path) -> Path:
 def _install_kilo_plugin(project_dir: Path) -> None:
     """Write graphify.js plugin and register it without rewriting user JSONC."""
     plugin_file = project_dir / _KILO_PLUGIN_PATH
-    plugin_file.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(plugin_file.parent)
     plugin_file.write_text(_KILO_PLUGIN_JS, encoding="utf-8")
     print(f"  {_KILO_PLUGIN_PATH}  ->  tool.execute.before hook written")
 
     config_file = _kilo_config_path(project_dir)
     write_config_file = _kilo_config_write_path(project_dir)
-    write_config_file.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(write_config_file.parent)
     config = _load_json_like(config_file)
     plugins = config.get("plugin")
     if not isinstance(plugins, list):
@@ -1363,7 +1394,7 @@ def _uninstall_kilo_plugin(project_dir: Path) -> None:
         config["plugin"] = [plugin for plugin in plugins if plugin != entry]
         if not config["plugin"]:
             config.pop("plugin")
-        write_config_file.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir_parent(write_config_file.parent)
         write_config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
         print(
             f"  {write_config_file.relative_to(project_dir)}  ->  plugin deregistered"
@@ -1407,7 +1438,7 @@ _OPENCODE_CONFIG_PATH = Path(".opencode") / "opencode.json"
 def _install_opencode_plugin(project_dir: Path) -> None:
     """Write graphify.js plugin and register it in opencode.json."""
     plugin_file = project_dir / _OPENCODE_PLUGIN_PATH
-    plugin_file.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(plugin_file.parent)
     plugin_file.write_text(_OPENCODE_PLUGIN_JS, encoding="utf-8")
     print(f"  {_OPENCODE_PLUGIN_PATH}  ->  tool.execute.before hook written")
 
@@ -1493,7 +1524,7 @@ def _install_codex_hook(project_dir: Path, project: bool = False) -> None:
     then committed and an installing machine's path is wrong there (#3129).
     """
     hooks_path = project_dir / ".codex" / "hooks.json"
-    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(hooks_path.parent)
 
     existing = _read_settings_for_merge(hooks_path)
 
@@ -1810,7 +1841,7 @@ def _install_claude_hook(project_dir: Path, strict: bool = False, project: bool 
     is then committed and an installing machine's path is wrong there (#3129).
     """
     settings_path = project_dir / ".claude" / "settings.json"
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(settings_path.parent)
 
     settings = _read_settings_for_merge(settings_path)
 
@@ -1992,7 +2023,7 @@ def codebuddy_install(project_dir: Path | None = None) -> None:
 def _install_codebuddy_hook(project_dir: Path) -> None:
     """Add graphify PreToolUse hook to .codebuddy/settings.json."""
     settings_path = project_dir / ".codebuddy" / "settings.json"
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parent(settings_path.parent)
 
     settings = _read_settings_for_merge(settings_path)
 
