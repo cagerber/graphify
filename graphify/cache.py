@@ -17,6 +17,7 @@ from graphify.paths import (
     graphify_out_dir,
     graphify_out_rel,
 )
+from graphify.paths import os_replace_with_fallback as _os_replace_with_fallback
 
 # AST cache entries are the output of graphify's own extractor code, so they
 # are only valid for the version that wrote them: keying purely on file
@@ -398,7 +399,7 @@ def _flush_stat_index() -> None:
         try:
             os.write(fd, json.dumps(on_disk, separators=(",", ":")).encode())
             os.close(fd)
-            os.replace(tmp, p)
+            _os_replace_with_fallback(tmp, p)
         except Exception:
             try:
                 os.close(fd)
@@ -1124,14 +1125,7 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
     try:
         os.write(fd, json.dumps(on_disk).encode())
         os.close(fd)
-        try:
-            os.replace(tmp_path, entry)
-        except PermissionError:
-            # Windows: os.replace can fail with WinError 5 if the target is
-            # briefly locked. Fall back to copy-then-delete.
-            import shutil
-            shutil.copy2(tmp_path, entry)
-            os.unlink(tmp_path)
+        _os_replace_with_fallback(tmp_path, entry)
     except Exception:
         try:
             os.close(fd)

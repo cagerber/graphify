@@ -101,11 +101,19 @@ fi
 # Scan the uv tool envs directly; UV_TOOL_DIR overrides the default
 # location. A tool env is adopted only if its python passes the probe, so a
 # co-installed tool without graphify never satisfies it.
+#
+# The snap roots matter because an install made from inside a snap-confined
+# editor lands in that snap's private HOME, which the plain $HOME roots above
+# never see once the hook runs from an ordinary shell. Revisions are globbed
+# rather than pinned: snap rotates them on update, which is exactly what makes
+# a pinned path unsafe (see _is_rotating_prefix).
 if [ -z "$GRAPHIFY_PYTHON" ]; then
     for _GFY_TOOLS in \
         "${UV_TOOL_DIR:-}" \
         "$HOME/.local/share/uv/tools" \
-        "$HOME/AppData/Roaming/uv/tools"; do
+        "$HOME/AppData/Roaming/uv/tools" \
+        "$HOME"/snap/*/current/.local/share/uv/tools \
+        "$HOME"/snap/*/[0-9]*/.local/share/uv/tools; do
         [ -n "$_GFY_TOOLS" ] || continue
         for _GFY_CAND in "$_GFY_TOOLS"/*/bin/python "$_GFY_TOOLS"/*/Scripts/python.exe; do
             [ -x "$_GFY_CAND" ] || continue
@@ -147,7 +155,6 @@ print(f'[graphify hook] {len(changed)} file(s) changed - rebuilding graph...')
 
 try:
     from graphify.watch import _rebuild_code, _apply_resource_limits
-    from graphify.paths import graphify_out_dir
     _apply_resource_limits()
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0:
@@ -176,11 +183,29 @@ try:
             _watchdog.start()
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
     _root = Path('.')
-    _saved = graphify_out_dir(_root) / '.graphify_root'
+    # Self-contained on purpose: tests/test_hooks.py exec's this snippet with only
+    # Path/os in scope, so the helper import has to live inside it. GRAPHIFY_OUT is
+    # resolved at call time (fork #1423); _out feeds the memory-lessons block.
+    from graphify.paths import graphify_out_dir
+    _out = str(graphify_out_dir(_root))
+    _saved = Path(_out) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
-            _root = Path(_txt)
+            _candidate = Path(_txt)
+            try:
+                _cwd = Path.cwd().resolve()
+                _resolved = _candidate.resolve()
+                # Python 3.13 no longer raises on a symlink loop (resolve returns
+                # the path unresolved), so require a real directory: a loop or a
+                # dangling target is not a dir and correctly falls back.
+                _in_repo = (_resolved == _cwd or _cwd in _resolved.parents) and _resolved.is_dir()
+            except (OSError, RuntimeError):
+                _in_repo = False
+            if _in_repo:
+                _root = _candidate
+            else:
+                print(f'[graphify hook] ignoring out-of-repo .graphify_root: {_txt}')
     _rebuild_code(_root, changed_paths=changed, force=_force)
     # Refresh the work-memory lessons doc when saved Q&A outcomes exist
     # (best-effort; never fails the hook).
@@ -203,7 +228,6 @@ except Exception as exc:
 
 _REBUILD_BODY_CHECKOUT = """\
 from graphify.watch import _rebuild_code, _apply_resource_limits
-from graphify.paths import graphify_out_dir
 from pathlib import Path
 import os, signal, sys, threading, multiprocessing
 try:
@@ -238,11 +262,29 @@ try:
     # (no changed_paths) is correct here. The flock inside _rebuild_code still
     # prevents pile-ups when commit + checkout fire back-to-back.
     _root = Path('.')
-    _saved = graphify_out_dir(_root) / '.graphify_root'
+    # Self-contained on purpose: tests/test_hooks.py exec's this snippet with only
+    # Path/os in scope, so the helper import has to live inside it. GRAPHIFY_OUT is
+    # resolved at call time (fork #1423); _out feeds the memory-lessons block.
+    from graphify.paths import graphify_out_dir
+    _out = str(graphify_out_dir(_root))
+    _saved = Path(_out) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
-            _root = Path(_txt)
+            _candidate = Path(_txt)
+            try:
+                _cwd = Path.cwd().resolve()
+                _resolved = _candidate.resolve()
+                # Python 3.13 no longer raises on a symlink loop (resolve returns
+                # the path unresolved), so require a real directory: a loop or a
+                # dangling target is not a dir and correctly falls back.
+                _in_repo = (_resolved == _cwd or _cwd in _resolved.parents) and _resolved.is_dir()
+            except (OSError, RuntimeError):
+                _in_repo = False
+            if _in_repo:
+                _root = _candidate
+            else:
+                print(f'[graphify] ignoring out-of-repo .graphify_root: {_txt}')
     _rebuild_code(_root, force=_force)
     # Refresh the work-memory lessons doc when saved Q&A outcomes exist
     # (best-effort; never fails the hook).
@@ -651,7 +693,29 @@ def _pinned_python() -> str:
     """
     if re.search(r"[^a-zA-Z0-9/_.@: \\-]", sys.executable):
         return ""
+    if _is_rotating_prefix(sys.executable):
+        return ""
     return sys.executable
+
+
+# ``~/snap/<app>/<revision>/`` — snap swaps <revision> on every package update and
+# prunes the old tree, so anything under it is a path with an expiry date.
+_ROTATING_PREFIX_RE = re.compile(r"/snap/[^/]+/(\d+|current)/")
+
+
+def _is_rotating_prefix(path: str) -> bool:
+    """True if `path` lives under a directory the packaging system rotates.
+
+    A pin is only worth writing if it will still resolve tomorrow. An interpreter
+    inside a snap revision will not: the revision number changes on update and the
+    old tree is removed, which silently kills every hook pinned to it — observed
+    across 15 repositories at once when an editor snap moved past its revision.
+
+    Returning "" here is the documented safe degradation: the hook falls through to
+    its other probes, including the uv-tools scan, which searches snap-confined
+    homes too.
+    """
+    return bool(_ROTATING_PREFIX_RE.search(path.replace("\\", "/")))
 
 
 def _merge_attr_line() -> str:

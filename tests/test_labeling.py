@@ -203,6 +203,9 @@ def test_generate_community_labels_degrades_on_error(monkeypatch):
 def test_generate_community_labels_no_backend(monkeypatch):
     G, communities = _graph()
     monkeypatch.setattr("graphify.llm.detect_backend", lambda: None)
+    # Keep hermetic: the claude-cli labelling fallback (#3475) probes PATH, so a
+    # machine with `claude` installed would otherwise take the CLI path here.
+    monkeypatch.setattr("graphify.llm._claude_cli_available", lambda: False)
     labels, source = generate_community_labels(G, communities, backend=None, quiet=True)
     assert source == "placeholder"
     assert labels == {0: "Community 0", 1: "Community 1"}
@@ -648,8 +651,12 @@ def test_cluster_only_marks_html_stale_before_report_generation(
         ["graphify", "cluster-only", str(tmp_path), "--no-label"],
     )
 
-    with pytest.raises(KeyboardInterrupt):
+    # Trifour: main() turns an interrupt into exit 130 (no traceback) — see
+    # tests/test_cli_keyboard_interrupt.py. The repairability invariant below is
+    # unchanged: the marker must already be on disk when the interrupt lands.
+    with pytest.raises(SystemExit) as exc:
         cli.main()
+    assert exc.value.code == 130
 
     marker = out / ".graph.html.stale"
     assert html.read_text(encoding="utf-8") == "previous visualization"

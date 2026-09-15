@@ -2,6 +2,8 @@
 import os
 import shutil
 import subprocess
+import sys
+import textwrap
 from types import SimpleNamespace
 from pathlib import Path
 import pytest
@@ -331,6 +333,78 @@ def test_rebuild_bodies_with_graphify_root_are_valid_python():
     that crashes the moment git fires it (#1173)."""
     for body in (_REBUILD_BODY_COMMIT, _REBUILD_BODY_CHECKOUT):
         ast.parse(body)
+
+
+def _extract_root_resolution(body: str) -> str:
+    """Pull the `.graphify_root` -> `_root` snippet out of a rebuild body, so a
+    test can execute the shipped logic itself rather than a hand copy that could
+    quietly drift from it."""
+    match = re.search(r"(    _root = Path\('\.'\).*?)\n    _rebuild_code\(", body, re.DOTALL)
+    assert match, "root resolution snippet not found"
+    return textwrap.dedent(match.group(1))
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_rebuild_bodies_reject_an_out_of_repo_graphify_root(name, body, tmp_path, monkeypatch):
+    """#3265: `.graphify_root` sits inside graphify-out/, a directory the
+    documented team workflow says to commit, so its contents are checkout
+    controlled. Without a bound, a value planted there by a malicious fork or PR
+    (an absolute path outside the repository) would steer the rebuild -- and so
+    what gets read, and what gets written into the same committed graphify-out/
+    -- to wherever the checkout names, not the repository the hook was installed
+    into. The recovered root must stay inside the working tree the hook actually
+    runs from."""
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    (repo / "graphify-out").mkdir(parents=True)
+    outside.mkdir()
+    (repo / "graphify-out" / ".graphify_root").write_text(str(outside), encoding="utf-8")
+    monkeypatch.chdir(repo)
+    ns = {"Path": Path, "os": os}
+    exec(compile(_extract_root_resolution(body), "<rebuild_body>", "exec"), ns)
+    assert ns["_root"].resolve() == repo.resolve(), f"{name} honoured an out-of-repo root"
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_rebuild_bodies_honour_an_in_repo_graphify_root(name, body, tmp_path, monkeypatch):
+    """The legitimate case the #3265 guard must not break: a subdirectory-scoped
+    root (#1173) is still recovered."""
+    repo = tmp_path / "repo"
+    (repo / "graphify-out").mkdir(parents=True)
+    (repo / "backend").mkdir()
+    (repo / "graphify-out" / ".graphify_root").write_text("backend", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    ns = {"Path": Path, "os": os}
+    exec(compile(_extract_root_resolution(body), "<rebuild_body>", "exec"), ns)
+    assert ns["_root"].resolve() == (repo / "backend").resolve(), f"{name} lost the scoped root"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink setup differs on Windows")
+@pytest.mark.parametrize(
+    "name,body",
+    [("post-commit", _REBUILD_BODY_COMMIT), ("post-checkout", _REBUILD_BODY_CHECKOUT)],
+)
+def test_rebuild_bodies_survive_a_graphify_root_symlink_loop(name, body, tmp_path, monkeypatch):
+    """A committed `.graphify_root` naming a path that resolves through a
+    symlink loop (two symlinks pointing at each other) must fall back to the
+    repo top rather than let `Path.resolve()`'s RuntimeError escape the #3265
+    guard uncaught -- the guard's own `except OSError` doesn't catch it, since
+    a symlink loop is a RuntimeError on this platform, not an OSError."""
+    repo = tmp_path / "repo"
+    (repo / "graphify-out").mkdir(parents=True)
+    (repo / "loop_a").symlink_to(repo / "loop_b")
+    (repo / "loop_b").symlink_to(repo / "loop_a")
+    (repo / "graphify-out" / ".graphify_root").write_text("loop_a", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    ns = {"Path": Path, "os": os}
+    exec(compile(_extract_root_resolution(body), "<rebuild_body>", "exec"), ns)
+    assert ns["_root"].resolve() == repo.resolve(), f"{name} did not fall back on a symlink loop"
 
 
 @pytest.mark.parametrize(
@@ -1274,3 +1348,62 @@ def test_rebuild_bodies_tolerate_a_bom_in_graphify_root(name, body):
     assert "encoding='utf-8')" not in body, (
         f"{name} rebuild body still has a BOM-intolerant read"
     )
+
+
+@pytest.mark.parametrize("exe", [
+    "/home/dev/snap/code/259/.local/share/uv/tools/graphifyy/bin/python",
+    "/home/dev/snap/code/current/.local/share/uv/tools/graphifyy/bin/python",
+    "/root/snap/pycharm-community/42/.local/share/uv/tools/graphifyy/bin/python",
+])
+def test_pinned_python_refuses_a_rotating_snap_revision(exe, monkeypatch):
+    """A pin is only worth writing if it still resolves tomorrow.
+
+    graphify installed from inside a snap-confined editor lives under
+    ``~/snap/<app>/<revision>/``. Snap swaps that revision on update and prunes the
+    old tree, so the pin dies silently — observed across 15 repositories at once
+    when an editor snap moved past revision 259. Every commit then printed "could
+    not locate a Python with graphify installed" and the graphs quietly stopped
+    tracking the code.
+
+    Empty is the documented safe degradation: the hook falls through to its other
+    probes, and the uv-tools probe searches snap homes by glob.
+    """
+    import sys as _sys
+
+    from graphify.hooks import _pinned_python
+
+    monkeypatch.setattr(_sys, "executable", exe)
+    assert _pinned_python() == "", "a path under a rotating snap revision must not be pinned"
+
+
+def test_pinned_python_still_pins_a_stable_path(monkeypatch):
+    """The rotating-prefix rule must not swallow ordinary installs.
+
+    Control for the test above: 'snap' appearing anywhere else in a path — a user
+    named snap, a project directory called snap — is not a snap revision tree.
+    """
+    import sys as _sys
+
+    from graphify.hooks import _pinned_python
+
+    for exe in (
+        "/home/dev/.local/share/uv/tools/graphifyy/bin/python",
+        "/usr/bin/python3",
+        "/home/snap/projects/venv/bin/python",
+    ):
+        monkeypatch.setattr(_sys, "executable", exe)
+        assert _pinned_python() == exe, f"{exe} is stable and must still be pinned"
+
+
+def test_hook_probes_snap_confined_uv_tool_dirs():
+    """The uv-tools probe must look inside snap-confined HOMEs.
+
+    An install made from a snap-confined editor lands in that snap's private HOME.
+    Once the hook runs from an ordinary shell, $HOME is the real one, so the plain
+    roots never see it — which is what left the pin as the only thing that could
+    ever find such an install.
+    """
+    from graphify.hooks import _HOOK_SCRIPT
+
+    assert '"$HOME"/snap/*/[0-9]*/.local/share/uv/tools' in _HOOK_SCRIPT
+    assert '"$HOME"/snap/*/current/.local/share/uv/tools' in _HOOK_SCRIPT

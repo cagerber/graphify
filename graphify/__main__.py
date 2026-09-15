@@ -515,6 +515,9 @@ def main() -> None:
         sys.stdout.flush()
     except BrokenPipeError:
         _silence_broken_pipe()
+    except KeyboardInterrupt:
+        # User/agent Ctrl+C during long update/extract — exit 130 without traceback (#ODS).
+        sys.exit(130)
     except OSError as exc:
         # Windows surfaces a write to a closed pipe as OSError(EINVAL) rather than
         # BrokenPipeError; EPIPE is the POSIX form when it slips past the above.

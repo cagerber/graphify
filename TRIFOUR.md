@@ -4,6 +4,17 @@
 
 Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`v8` branch).
 
+## Changes in `0.9.61+trifour.1`
+
+- **Upstream merge 0.9.61** — 0.9.58→0.9.61 (57 commits): nested-function/namespace-package/sibling-import resolution fixes, Python symbol-resolution memoization (~47% faster), incremental-merge node preservation (#3477), process-pool fallback (#3497), hook rebuild root kept inside the repo (#3265: symlink-loop and out-of-repo `.graphify_root` are ignored), snap-confined uv-tool probing and the rotating-interpreter-prefix guard for the hook's python pin, Windows `os.replace` fallback (#3508), catch-up cross-file merge (#3490), C# generic call sites, unclassified-file surfacing in the watch/update rebuild path (#3511), and `graphify.serve` importing cleanly on 3.12/3.13 (`chinese` extra now pins `jieba-py`).
+- **Merge-regression fixes (this release):**
+  - `hooks.py` rebuild bodies: the auto-merge kept the fork's `graphify_out_dir(_root)` but dropped upstream's `_out = os.environ.get('GRAPHIFY_OUT', 'graphify-out')` line, leaving a latent `NameError` in the memory-lessons block and breaking the shipped-snippet tests (`upstream/tests/test_hooks.py` exec's the root-resolution snippet with only `Path`/`os`, so it must stay self-contained). Both bodies now use upstream's env read.
+  - `[all]` is once again the union of every other extra: the slim-core split moved the less-common grammars into `langs-extra`, so they are listed in `all` explicitly (enforced by upstream's new `tests/test_backend_extras.py`).
+- **Fork work taken back off the stash (stashed uncommitted, never released):**
+  - `extract()` **Phase 1** now queues consumer-owned paths via `_get_extractors()` instead of `_get_extractor()`, so consumer-only files (`.refcsp`, `.dfi`, …) are no longer empty-slotted with false **#1666** zero-node warnings — the Phase-1 half of the trifour.2 worker fix.
+  - `main()` exits **130** on Ctrl+C instead of propagating a traceback; `tests/test_labeling.py`'s interrupt test asserts the exit code and keeps its repairability invariant (`tests/test_cli_keyboard_interrupt.py`).
+- **Known red (pre-existing, not a merge regression):** `tests/test_watch.py::test_rebuild_code_keeps_a_visualization_when_over_the_viz_cap` — the fork's folder-edge enrich (`graphify/enrich.py`) emits a `same_directory` edge on the incremental rebuild that the full rebuild omits, so the unchanged-topology path refuses to repair a deleted `graph.html` and falls through to re-clustering (which the test forbids). Fails identically at `0.9.57+trifour.2`; passes with `GRAPHIFY_FOLDER_EDGES=0` and on upstream `v8`. Fix belongs in fork-owned `enrich.py`.
+
 ## Changes in `0.9.57+trifour.2`
 
 - **Consumer-only extractors in parallel/sequential workers** — ``_extract_single_file`` / sequential fallback no longer return empty when built-in ``_get_extractor`` is ``None`` but ``[[tool.graphify.extractors]]`` owns the path (fixes false **#1666** for ``.refcsp`` / consumer fragments under ``ProcessPoolExecutor``).

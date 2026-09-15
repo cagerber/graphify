@@ -161,6 +161,36 @@ path_glob = "reference/source_entities/**"
     assert result["nodes"][0]["id"] == "Demo"
 
 
+def test_consumer_only_path_runs_through_extract(tmp_path, monkeypatch):
+    """extract() Phase 1 must queue consumer-owned paths, not empty-slot them."""
+    root = tmp_path
+    _write_fake_consumer(root)
+    src = root / "reference" / "source_entities"
+    src.mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+[[tool.graphify.extractors]]
+module = "consumer_ext.extract"
+function = "extract_demo"
+extensions = [".refcsp"]
+path_glob = "reference/source_entities/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    csp = src / "Demo.refcsp"
+    csp.write_text("<html></html>\n")
+    monkeypatch.chdir(root)
+    monkeypatch.syspath_prepend(str(root))
+
+    from graphify.extract import extract
+
+    result = extract([csp], root=root, parallel=True)
+    assert result["nodes"]
+    assert result["nodes"][0]["id"] == "Demo"
+
+
 def test_multiple_consumer_extractors(tmp_path, monkeypatch):
     root = tmp_path
     _write_fake_consumer(root)
