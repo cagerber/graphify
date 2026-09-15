@@ -115,10 +115,12 @@ python scripts/upstream_footprint.py          # per-file surface
 python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
 ```
 
-Surface of this delta against `v0.9.61`: **35 fork-only files** and **17 upstream-owned files**
-modified, with zero rewritten upstream comments or docstrings (one waiver, recorded in
+Surface of this delta against `v0.9.61`: **35 fork-only files** and **19 upstream-owned files**
+modified (`+792 / -152`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
-installed into users' `.git/hooks`, which would otherwise ship corrupted bytes).
+installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
+`scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`
+added `graphify/install.py` (17 → 19) and `tests/test_install.py` to the surface.
 
 Merge protocol: `uv.lock` is never hand-merged — take either side, then `uv lock`. After every merge,
 re-check the upstream invariants this fork interacts with:
