@@ -1,4 +1,4 @@
-"""Tests for trifour viz expansion."""
+"""Tests for fork viz expansion."""
 
 from __future__ import annotations
 

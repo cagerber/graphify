@@ -1203,10 +1203,10 @@ def dispatch_command(cmd: str) -> None:
         if len(sys.argv) < 3:
             print("Usage: graphify query \"<question>\" [--dfs] [--context C] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import (
-            _direct_callers_text,
-            _extract_callers_target,
-            _query_graph_text,
+        from graphify.serve import _query_graph_text
+        from graphify.trifour.query.callers import (
+            direct_callers_text,
+            extract_callers_target,
         )
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
@@ -1302,11 +1302,11 @@ def dispatch_command(cmd: str) -> None:
             sys.exit(1)
         import time as _time
         _t0 = _time.perf_counter()
-        _callers_target = _extract_callers_target(question)
+        _callers_target = extract_callers_target(question)
         if _callers_target and not context_filters and not use_dfs:
             # Direct "who calls X" → inbound call list (not community BFS).
             # Explicit --context / --dfs keep the traversal path.
-            _result = _direct_callers_text(G, _callers_target)
+            _result = direct_callers_text(G, _callers_target)
             _mode = "callers"
         else:
             _mode = "dfs" if use_dfs else "bfs"
@@ -1865,7 +1865,7 @@ def dispatch_command(cmd: str) -> None:
         if len(sys.argv) < 3:
             print('Usage: graphify callers "<node>" [--graph path]', file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _direct_callers_text
+        from graphify.trifour.query.callers import direct_callers_text
         from networkx.readwrite import json_graph
 
         label = sys.argv[2]
@@ -1899,7 +1899,7 @@ def dispatch_command(cmd: str) -> None:
             G = json_graph.node_link_graph(_raw, edges="links")
         except TypeError:
             G = json_graph.node_link_graph(_raw)
-        result = _direct_callers_text(G, label)
+        result = direct_callers_text(G, label)
         if result.startswith("Ambiguous:"):
             print(result)
             sys.exit(1)
@@ -2192,7 +2192,7 @@ def dispatch_command(cmd: str) -> None:
         # before re-clustering (#934) — fall back to the CWD's graphify-out/,
         # which is the restore-into-place workflow that test pins. The default
         # (no --graph) case already has graph_json under watch_path/graphify-out.
-        # Trifour: the fallback resolves GRAPHIFY_OUT at call time via
+        # Fork: the fallback resolves GRAPHIFY_OUT at call time via
         # graphify_out_for_watch() instead of the import-time constant.
         _out_name = Path(_GRAPHIFY_OUT).name
         if graph_override is not None and graph_json.parent.name == _out_name:

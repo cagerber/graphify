@@ -16,7 +16,7 @@ from pathlib import Path
 # shared-output setups. Accepts a relative name ("graphify-out-feature") or an
 # absolute path ("/shared/graphify-out"). Single source of truth in graphify.paths
 # (#1423); re-exported here as _GRAPHIFY_OUT for the existing call sites.
-# Trifour: the call sites below resolve through graphify_out_dir() (call-time, so a
+# Fork: the call sites below resolve through graphify_out_dir() (call-time, so a
 # GRAPHIFY_OUT set after import still applies); the import above is kept as the
 # upstream re-export. graphify_out_rel() is the fork's canonical accessor.
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT

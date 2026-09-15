@@ -23,6 +23,7 @@ except Exception:
 # Defined once in graphify.paths so the security/callflow path guards honour the
 # same override (#1423).
 from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT
+from graphify.trifour.skill_scope import skill_version_check_targets
 
 # Install/uninstall subsystem moved to graphify/install.py; re-exported here so
 # `from graphify.__main__ import <name>` keeps working unchanged.
@@ -158,24 +159,6 @@ def __getattr__(name: str) -> str:
 
 
 
-
-
-def _skill_version_check_targets() -> set[Path]:
-    """Skill install paths to compare against the running package version.
-
-    When ``GRAPHIFY_OUT`` is set, only check the project ``.agents/skills/graphify``
-    stamp so unrelated global IDE skills do not warn on every ``update``.
-    """
-    if os.environ.get("GRAPHIFY_OUT", "").strip():
-        project_skill = Path(".agents/skills/graphify/SKILL.md")
-        vf = project_skill.parent / ".graphify_version"
-        try:
-            if vf.exists():
-                return {project_skill}
-            return set()
-        except OSError:
-            return set()
-    return {_platform_skill_destination(name) for name in _PLATFORM_CONFIG}
 
 
 def _check_skill_version(skill_dst: Path, platform_names: "list[str] | None" = None) -> None:
@@ -543,7 +526,7 @@ def _run_cli() -> None:
         # Resolve each platform's real user-scope destination so per-platform
         # overrides (gemini, opencode, devin, antigravity, amp) check the dir
         # they actually install into, not the bare cfg['skill_dst'].
-        for skill_dst in _skill_version_check_targets():
+        for skill_dst in skill_version_check_targets():
             _check_skill_version(skill_dst)
 
     if len(sys.argv) >= 2 and sys.argv[1] in ("-v", "--version", "version"):

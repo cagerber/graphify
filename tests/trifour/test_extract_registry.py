@@ -7,10 +7,13 @@ from pathlib import Path
 from graphify.detect import CODE_EXTENSIONS
 from graphify.extract import (
     _DISPATCH,
+    extract_apex,
     _bypass_ast_cache,
-    _merge_extraction_results,
     _path_has_extractor,
+)
+from graphify.trifour.extract.consumer import (
     extract_objectscript,
+    merge_extraction_results,
 )
 from graphify.trifour.extract.registry import (
     resolve_consumer_extractor,
@@ -98,9 +101,29 @@ path_glob = "src/**"
     assert _bypass_ast_cache(other) is False
 
 
-def test_dfi_and_refcsp_in_code_extensions() -> None:
-    assert ".dfi" in CODE_EXTENSIONS
-    assert ".refcsp" in CODE_EXTENSIONS
+def test_consumer_declared_suffixes_are_code(tmp_path, monkeypatch) -> None:
+    """A suffix named by an extractor rule is code for that consumer (no fork list)."""
+    from graphify.config import consumer_code_extensions
+
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+code_extensions = [".refcsp"]
+[[tool.graphify.extractors]]
+module = "consumer_ext.extract"
+function = "extract_demo"
+extensions = [".refcsp", ".DFI", ".cls"]
+path_glob = "src/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(root)
+
+    derived = consumer_code_extensions()
+    # rule extensions are lowercased and dot-normalised; explicit key included too
+    assert {".refcsp", ".dfi", ".cls"} <= derived
 
 
 def test_consumer_owned_paths_skip_no_ast_extractor_warning(tmp_path, monkeypatch):
@@ -222,7 +245,7 @@ path_glob = "src/**"
 
 
 def test_merge_extraction_results_concatenates_nodes() -> None:
-    merged = _merge_extraction_results(
+    merged = merge_extraction_results(
         [
             {"nodes": [{"id": "a"}], "edges": []},
             {"nodes": [{"id": "b"}], "edges": [{"source": "a", "target": "b"}]},
@@ -232,14 +255,47 @@ def test_merge_extraction_results_concatenates_nodes() -> None:
     assert len(merged["edges"]) == 1
 
 
-def test_cls_builtin_dispatch_is_objectscript_not_apex() -> None:
-    assert _DISPATCH[".cls"] is extract_objectscript
-    assert _DISPATCH[".refcls"] is extract_objectscript
+def test_upstream_suffix_table_is_untouched(tmp_path) -> None:
+    """The built-in dispatch table stays upstream's: .cls is Apex there."""
+    assert _DISPATCH[".cls"] is extract_apex
+    assert ".refcls" not in _DISPATCH
 
 
-def test_objectscript_extensions_in_code_extensions() -> None:
-    for ext in (".mac", ".int", ".os", ".rtn", ".refcls"):
-        assert ext in CODE_EXTENSIONS
+def test_unmatched_consumer_suffix_never_falls_back_to_another_language(
+    tmp_path, monkeypatch
+) -> None:
+    """A consumer-owned suffix with no matching rule yields the stub, not Apex.
+
+    Upstream would hand an ObjectScript ``.cls`` to the Apex extractor, which
+    emits wrong-language nodes for a file the consumer has declared as its own.
+    """
+    root = tmp_path
+    _write_fake_consumer(root)
+    (root / "pyproject.toml").write_text(
+        """
+[tool.graphify]
+[[tool.graphify.extractors]]
+module = "consumer_ext.extract"
+function = "extract_demo"
+extensions = [".cls", ".mac"]
+path_glob = "src/**"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    stray = root / "elsewhere" / "Thing.cls"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("Class Thing\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+    monkeypatch.syspath_prepend(str(root))
+
+    from graphify.extract import _get_extractors
+
+    extractors = _get_extractors(stray)
+    assert extractors == [extract_objectscript]
+    result = extractors[0](stray)
+    assert result["nodes"] == []
+    assert "extractors" in result["error"]
 
 
 def test_post_extract_merge_config_no_op_without_spec(tmp_path):

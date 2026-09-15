@@ -13,7 +13,7 @@ once at import time, matching the previous per-module constants — set
 ``GRAPHIFY_OUT`` before the process starts (the normal worktree/shared-output
 flow) and every reader honours it.
 """
-# Trifour: resolution is call-time, not import-time (see ``graphify_out_rel`` /
+# Fork: resolution is call-time, not import-time (see ``graphify_out_rel`` /
 # ``graphify_out_dir``), so a consumer that sets GRAPHIFY_OUT after import — e.g.
 # ``.local/graphify-out`` per checkout — is still honoured. A module-level
 # assignment would shadow the lazy attributes, so ``GRAPHIFY_OUT`` /
@@ -427,7 +427,7 @@ def out_path(*parts: str, root: Path | str | None = None) -> Path:
     ``Path(GRAPHIFY_OUT) / ...`` resolves correctly for both a relative name
     ("graphify-out") and an absolute override ("/shared/graphify-out").
 
-    Trifour: resolved at call time through :func:`graphify_out_dir`; *root*
+    Fork: resolved at call time through :func:`graphify_out_dir`; *root*
     anchors a relative override at the caller's project root.
     """
     return graphify_out_dir(root).joinpath(*parts)
@@ -448,7 +448,7 @@ def default_graph_json(root: Path | str | None = None) -> str:
     commands so a ``GRAPHIFY_OUT`` override is honoured everywhere, not just where
     the path is passed explicitly (#1423).
 
-    Trifour: resolved at call time (see ``default_graph_json_path``).
+    Fork: resolved at call time (see ``default_graph_json_path``).
     """
     return default_graph_json_path(root)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,10 @@ class GraphifyConfig:
     pytest_enrich: bool = True
     heuristic_labels: bool = False
     extractors: list[ExtractorRule] = field(default_factory=list)
+    # Suffixes the consumer declares as source code. Extensions named by an
+    # ``[[tool.graphify.extractors]]`` rule are always included, so a rule is the
+    # single place to declare a consumer-owned language.
+    code_extensions: list[str] = field(default_factory=list)
     # Optional ``module:function`` invoked after full AST rebuild (consumer KG extensions).
     post_extract_merge: str = ""
 
@@ -63,6 +68,9 @@ def enrich_flags(project_root: Path | str | None = None) -> dict[str, bool]:
     }
 
 
+_CONFIG_CACHE: dict[tuple[str, int, int], "GraphifyConfig"] = {}
+
+
 def _find_pyproject(root: Path) -> Path | None:
     for parent in [root, *root.parents]:
         candidate = parent / "pyproject.toml"
@@ -72,11 +80,25 @@ def _find_pyproject(root: Path) -> Path | None:
 
 
 def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
-    """Load ``[tool.graphify]`` from the nearest ``pyproject.toml`` upward from *root*."""
+    """Load ``[tool.graphify]`` from the nearest ``pyproject.toml`` upward from *root*.
+
+    Cached per file signature: extractor dispatch resolves the config once per
+    file, and re-parsing the TOML every time cost ~0.4 ms/file. A rewrite changes
+    ``mtime_ns``/size, so the entry is replaced rather than reused.
+    """
     base = Path(root or ".").resolve()
     pyproject = _find_pyproject(base)
     if pyproject is None:
         return GraphifyConfig()
+
+    try:
+        stat = pyproject.stat()
+    except OSError:
+        return GraphifyConfig()
+    key = (str(pyproject), stat.st_mtime_ns, stat.st_size)
+    cached = _CONFIG_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -85,6 +107,7 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
 
     section: dict[str, Any] = data.get("tool", {}).get("graphify", {})
     if not section:
+        _remember_config(key, GraphifyConfig())
         return GraphifyConfig()
 
     rules: list[TestsCoversRule] = []
@@ -140,7 +163,14 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
             )
         )
 
-    return GraphifyConfig(
+    raw_code_ext = section.get("code_extensions", [])
+    if isinstance(raw_code_ext, str):
+        raw_code_ext = [raw_code_ext]
+    code_extensions = [
+        str(x).strip().lower() for x in raw_code_ext if str(x).strip()
+    ]
+
+    cfg = GraphifyConfig(
         test_roots=[str(r) for r in test_roots],
         tests_covers=rules,
         folder_prefix_depth=folder_prefix_depth,
@@ -149,8 +179,49 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
         pytest_enrich=bool(section.get("pytest_enrich", True)),
         heuristic_labels=bool(section.get("heuristic_labels", False)),
         extractors=extractors,
+        code_extensions=code_extensions,
         post_extract_merge=str(section.get("post_extract_merge") or "").strip(),
     )
+    _remember_config(key, cfg)
+    return cfg
+
+
+def _remember_config(key: tuple[str, int, int], cfg: GraphifyConfig) -> None:
+    """Cache a parsed config; drop the rest once the cache grows (tests use many tmp repos)."""
+    if len(_CONFIG_CACHE) > 64:
+        _CONFIG_CACHE.clear()
+    _CONFIG_CACHE[key] = cfg
+
+
+def consumer_code_extensions(root: Path | str | None = None) -> frozenset[str]:
+    """Suffixes the consumer's own configuration declares as source code.
+
+    A consumer-owned language is declared once — in the
+    ``[[tool.graphify.extractors]]`` rule that extracts it — so code detection
+    (``graphify.detect.CODE_EXTENSIONS``), the watch trigger and the "no
+    extractor" diagnostics all agree with the extraction rules by construction.
+    ``[tool.graphify] code_extensions`` adds suffixes that have no rule (a
+    format that is code but is not extracted), and ``GRAPHIFY_CODE_EXTENSIONS``
+    (comma or space separated) overrides for runs whose working directory is
+    outside the consumer project.
+    """
+    cfg = load_graphify_config(root)
+    suffixes = {_normalize_suffix(ext) for ext in cfg.code_extensions}
+    for rule in cfg.extractors:
+        suffixes.update(_normalize_suffix(ext) for ext in rule.extensions)
+    raw_env = os.environ.get("GRAPHIFY_CODE_EXTENSIONS", "")
+    for item in re.split(r"[,\s]+", raw_env):
+        if item.strip():
+            suffixes.add(_normalize_suffix(item))
+    suffixes.discard("")
+    return frozenset(suffixes)
+
+
+def _normalize_suffix(ext: str) -> str:
+    value = str(ext).strip().lower()
+    if not value:
+        return ""
+    return value if value.startswith(".") else f".{value}"
 
 
 def match_glob(path: str, pattern: str) -> bool:

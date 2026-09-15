@@ -1,5 +1,5 @@
 """Tests for graphify.paths — the shared test-path classifier (#1553)."""
-# Trifour: also covers GRAPHIFY_OUT resolution (graphify_out_dir / manifest_path /
+# Fork: also covers GRAPHIFY_OUT resolution (graphify_out_dir / manifest_path /
 # skip_dir_names, graphify_out_for_watch, detect.save_manifest).
 from __future__ import annotations
 

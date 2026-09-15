@@ -1,8 +1,41 @@
-# Trifour fork delta (graphifyy)
+# Fork delta (graphifyy)
 
 **Public repo.** Changelog here is **package-level only** — no private consumer runbooks or application paths. Consumer integration docs live in the consuming repo.
 
 Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`v8` branch).
+
+Version scheme: `<upstream version>+ext.<n>` (PEP 440 local segment; `-ext` is not a legal
+version string). Headings below `0.9.61+ext.1` keep the historical `+trifour.N` strings they
+were released under.
+
+## Changes in `0.9.61+ext.1`
+
+- **Local version suffix renamed** `+trifour.N` → `+ext.N` (generic; `-ext` is not a legal PEP 440
+  version, so the local-segment spelling is used). Brand references are gone from code comments,
+  docstrings, test names and this changelog; `TRIFOUR.md` is now `FORK.md`.
+- **Fork code moved out of upstream-owned files** (all five of these were fork-only functions or
+  product data living inside upstream modules):
+  - the direct-inbound-call feature (`_direct_callers_text`, `_extract_callers_target`,
+    `_is_call_edge`, `_CALL_RELATIONS`) → `graphify/trifour/query/callers.py`; `graphify/serve.py`
+    is now byte-identical to upstream;
+  - `extract_objectscript` / `_merge_extraction_results` → `graphify/trifour/extract/consumer.py`;
+  - the skill-version scope policy → `graphify/trifour/skill_scope.py`;
+  - the derived-folder-link filter → `graphify/enrich.py::topology_for_compare` (the concept it
+    belongs to); `graphify/watch.py` holds no fork-only function any more.
+- **Code extensions are consumer-declared data, not a fork constant.** `detect.CODE_EXTENSIONS` is
+  now built-ins ∪ `graphify.config.consumer_code_extensions()` — the union of every suffix named by
+  the consumer's `[[tool.graphify.extractors]]` rules, plus `[tool.graphify] code_extensions` and an
+  optional `GRAPHIFY_CODE_EXTENSIONS` env override. The hardcoded fork list
+  (`.refcls .dfi .refcsp .mac .int .os .rtn`) and the `.cls` suffix-map override are **gone**: the
+  built-in table is upstream's (`.cls` → Apex), and a suffix the consumer declares but no rule
+  matches for that path now routes to the consumer stub (no nodes + an actionable error) instead of
+  being handed to another language's extractor.
+- **`load_graphify_config()` is cached per pyproject signature** — extractor dispatch resolves it per
+  file, and re-parsing cost ~0.44 ms/file (now ~0.011 ms).
+- Fork-only files: 27 in the graphify package + 2 scripts. Upstream-owned files carry no fork-only
+  function except `paths.py`'s call-time `GRAPHIFY_OUT` resolver family and four dispatcher helpers
+  in `extract.py` (`_get_extractors`, `_path_has_extractor`, `_bypass_ast_cache`,
+  `_ast_progress_interval`) — those *are* the hook points.
 
 ## Changes in `0.9.61+trifour.1`
 
@@ -26,7 +59,7 @@ Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`
   - `_path_has_extractor()` — consumer ``[[tool.graphify.extractors]]`` paths (e.g. `.refcsp`, `.dfi`) no longer trigger false **#1689** “no AST extractor” warnings or empty-node failure marks.
   - `GRAPHIFY_AST_PROGRESS_INTERVAL` default **1000** (large corpora).
   - ObjectScript dispatch (`.cls`/`.refcls`/routines) via consumer extractors, not Apex.
-  - Trifour `CODE_EXTENSIONS` (`.refcls`, `.dfi`, `.refcsp`, routines).
+  - Fork `CODE_EXTENSIONS` (`.refcls`, `.dfi`, `.refcsp`, routines).
   - `GRAPHIFY_OUT` skill-version check scoped to project `.agents/skills/graphify` only.
   - Post-build enrich hook in watch path.
 
@@ -66,20 +99,20 @@ Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`
 ## Changes in `0.9.37+trifour.1`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.9.37` (`09a34ad`; ~300 commits past `9c27a52` / `0.9.12`).
-- **Preserved Trifour** — call-time `GRAPHIFY_OUT` (`graphify.paths`), consumer extractors / multi-extractor dispatch, `viz_layers` / enrich post-build, project-scoped skill warnings when `GRAPHIFY_OUT` is set.
+- **Preserved fork deltas** — call-time `GRAPHIFY_OUT` (`graphify.paths`), consumer extractors / multi-extractor dispatch, `viz_layers` / enrich post-build, project-scoped skill warnings when `GRAPHIFY_OUT` is set.
 - **Adopted upstream** — update/watch failed-AST stamp clearing (#2543), NFC path helpers, `load_node_link_graph`, cluster-only write-beside `#1747`, incremental `gitignore=` detect plumbing, CLI/query/path/explain fixes through `0.9.37`.
 
 ## Changes in `0.9.12+trifour.1`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.9.12` (`9c27a52`; 248 commits past `ad6cb75`).
-- **Architecture** — upstream `extractors/` / `exporters/` / `cli.py` refactor integrated; Trifour deltas preserved.
-- **Trifour preserved** — `graphify.trifour.*`, consumer extractors via `resolve_consumer_extractors`, call-time `GRAPHIFY_OUT`, `viz_contract`, `enrich` / `label --heuristic` / `viz` CLI, skill version scope when `GRAPHIFY_OUT` set.
+- **Architecture** — upstream `extractors/` / `exporters/` / `cli.py` refactor integrated; fork deltas preserved.
+- **Preserved** — `graphify.trifour.*`, consumer extractors via `resolve_consumer_extractors`, call-time `GRAPHIFY_OUT`, `viz_contract`, `enrich` / `label --heuristic` / `viz` CLI, skill version scope when `GRAPHIFY_OUT` set.
 
 ## Changes in `0.8.46+trifour.8`
 
 - **Upstream merge** — merged `safishamsi/graphify` `v8` @ `0.8.46` (incremental update, manifest, query perf, #1423 `GRAPHIFY_OUT` centralization).
 - **Call-time `GRAPHIFY_OUT`** — `graphify.paths` keeps call-time resolution via PEP 562 lazy exports; upstream path helpers adapted, not replaced.
-- **Package manifest extractor** — upstream `#1377` `extract_package_manifest` preserved alongside Trifour consumer extractors.
+- **Package manifest extractor** — upstream `#1377` `extract_package_manifest` preserved alongside fork consumer extractors.
 
 ## Changes in `0.8.39+trifour.7`
 
@@ -143,7 +176,7 @@ with `graphify/paths.py` alone going from −92 to −6. Zero rewritten upstream
 comments/docstrings; the single waiver (`scripts/upstream_footprint_allow.txt`) is upstream's
 mojibake em dash inside the installed hook payload, which would otherwise ship to users.
 
-When a line must change, change the fewest lines and add a `Trifour:` comment beside it
+When a line must change, change the fewest lines and add a `Fork:` comment beside it
 saying why: that comment is what turns the next merge into a 30-second resolution instead of a
 reconstruction. Fork-only CI is a script, not a step in upstream's
 `.github/workflows/ci.yml`.
@@ -184,7 +217,7 @@ strip_test_filename_prefix = "test_"
 | `GRAPHIFY_PYTEST_ENRICH` | `1` | Pytest markers + `tests_covers` on `update` |
 | `GRAPHIFY_HEURISTIC_LABELS` | from `[tool.graphify]` or `0` | Heuristic relabel after `update` |
 
-**Deprecated CLI aliases (remove from `dev/graphify` when on trifour.4+):** `label-communities`, `folder-edges` — use `label --heuristic` and `enrich --folder-links` directly.
+**Deprecated CLI aliases (remove from `dev/graphify` when on ext.4+):** `label-communities`, `folder-edges` — use `label --heuristic` and `enrich --folder-links` directly.
 
 ## Consumer git pin
 

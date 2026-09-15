@@ -463,7 +463,7 @@ def test_cluster_only_creates_output_dir_when_missing(tmp_path):
 
 
 def test_cluster_only_writes_to_graphify_out_env(tmp_path):
-    """cluster-only must write under GRAPHIFY_OUT, not hardcoded graphify-out/ (Trifour)."""
+    """cluster-only must write under GRAPHIFY_OUT, not hardcoded graphify-out/ (fork)."""
     graph_src = tmp_path / "backup" / "graph.json"
     graph_src.parent.mkdir()
 

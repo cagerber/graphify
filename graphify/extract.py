@@ -62,6 +62,11 @@ from graphify.extractors.verilog import extract_verilog  # noqa: F401
 from graphify.extractors.zig import extract_zig  # noqa: F401
 from graphify.security import sanitize_metadata
 from graphify.paths import disambiguate_ambiguous_candidates
+from graphify.trifour.extract.consumer import (
+    extract_objectscript,
+    is_consumer_owned_suffix,
+    merge_extraction_results,
+)
 
 from graphify.extractors.models import LanguageConfig, _JS_CACHE_BYPASS_SUFFIXES, _NamespaceExportFact, _StarExportFact, _SymbolAliasFact, _SymbolDeclarationFact, _SymbolExportFact, _SymbolImportFact, _SymbolResolutionFacts, _SymbolUseFact, _WORKSPACE_PACKAGE_CACHE  # noqa: E402,F401
 
@@ -170,23 +175,6 @@ _RECURSION_LIMIT = 10_000
 def _raise_recursion_limit() -> None:
     if sys.getrecursionlimit() < _RECURSION_LIMIT:
         sys.setrecursionlimit(_RECURSION_LIMIT)
-
-
-def _merge_extraction_results(results: list[dict]) -> dict:
-    """Merge nodes/edges from multiple extractors; concatenate errors."""
-    merged: dict = {"nodes": [], "edges": []}
-    errors: list[str] = []
-    for result in results:
-        if not result:
-            continue
-        merged["nodes"].extend(result.get("nodes") or [])
-        merged["edges"].extend(result.get("edges") or [])
-        err = result.get("error")
-        if err:
-            errors.append(str(err))
-    if errors:
-        merged["error"] = "; ".join(errors)
-    return merged
 
 
 def _safe_extract(extractor: Callable, path: Path) -> dict:
@@ -5837,29 +5825,6 @@ def extract_xaml(path: Path) -> dict:
 # block defined in the corpus (count.index, each.key, self.*, path.module, ...).
 
 
-def extract_objectscript(path: Path) -> dict:
-    """Extract ObjectScript via a consumer extractor when registered.
-
-    Built-in ``.cls`` / routine dispatch only succeeds when the consumer
-    registers an ObjectScript extractor under ``[[tool.graphify.extractors]]``.
-    """
-    try:
-        from graphify.trifour.extract.registry import resolve_consumer_extractors
-
-        extractors = resolve_consumer_extractors(path)
-        if extractors:
-            if len(extractors) == 1:
-                return extractors[0](path)
-            return _merge_extraction_results([fn(path) for fn in extractors])
-    except ImportError:
-        pass
-    return {
-        "nodes": [],
-        "edges": [],
-        "error": "objectscript extractor unavailable (register [[tool.graphify.extractors]])",
-    }
-
-
 _DISPATCH: dict[str, Any] = {
     ".py": extract_python,
     ".js": extract_js,
@@ -5961,13 +5926,8 @@ _DISPATCH: dict[str, Any] = {
     ".cshtml": extract_razor,
     ".robot": extract_robot,
     ".resource": extract_robot,
-    ".cls": extract_objectscript,
-    ".refcls": extract_objectscript,
+    ".cls": extract_apex,
     ".trigger": extract_apex,
-    ".mac": extract_objectscript,
-    ".int": extract_objectscript,
-    ".os": extract_objectscript,
-    ".rtn": extract_objectscript,
 }
 
 
@@ -6125,13 +6085,19 @@ def _get_extractors(path: Path) -> list[Any]:
             return consumers
     except ImportError:
         pass
+    if is_consumer_owned_suffix(path):
+        # The consumer declares this suffix but no rule matched this path: never
+        # fall through to a built-in extractor for another language (an
+        # ObjectScript .cls is not Apex), which would emit wrong-language nodes.
+        # The stub returns no nodes plus an actionable error.
+        return [extract_objectscript]
     builtin = _get_extractor(path)
     return [builtin] if builtin is not None else []
 
 
 def _get_extractor(path: Path) -> Any | None:
     """Return the correct extractor function for a file, or None if unsupported."""
-    # Trifour: built-in dispatch only — consumer [[tool.graphify.extractors]] rules
+    # Fork: built-in dispatch only — consumer [[tool.graphify.extractors]] rules
     # are applied by _get_extractors(), which wraps this.
     if path.name.lower().endswith(".blade.php"):
         return extract_blade
@@ -6230,7 +6196,7 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
 
     if len(extractors) > 1:
         results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
-        result = _merge_extraction_results(results)
+        result = merge_extraction_results(results)
     else:
         result = _safe_extract_with_xaml_root(extractors[0], path, root)
     # Never cache a zero-node result for an extractable file. Every supported
@@ -6425,7 +6391,7 @@ def _extract_sequential(
         # XAML boundary anchors on `root` (the corpus), not the cache location.
         if len(extractors) > 1:
             results = [_safe_extract_with_xaml_root(fn, path, root) for fn in extractors]
-            result = _merge_extraction_results(results)
+            result = merge_extraction_results(results)
         else:
             result = _safe_extract_with_xaml_root(extractors[0], path, root)
         # See _extract_single_file: don't cache an anomalous zero-node result (#1666).

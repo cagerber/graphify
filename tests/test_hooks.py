@@ -319,7 +319,7 @@ def test_rebuild_bodies_read_graphify_root(name, body):
     assert ".graphify_root" in body, f"{name} ignores .graphify_root (#1173)"
     # The output dir is resolved from GRAPHIFY_OUT at hook-run time, not hardcoded
     # to graphify-out/, so a renamed output dir is still found (#1423).
-    # Trifour: the resolution goes through graphify_out_dir() (call-time, absolute-aware).
+    # Fork: the resolution goes through graphify_out_dir() (call-time, absolute-aware).
     assert "graphify_out_dir" in body, f"{name} ignores graphify_out_dir (#1423)"
     assert "GRAPHIFY_OUT" in body, f"{name} ignores the GRAPHIFY_OUT override (#1423)"
     # The recovered root is what gets rebuilt, not a hardcoded cwd.

@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphifyy"
-version = "0.9.61+trifour.1"
+version = "0.9.61+ext.1"
 description = "AI coding assistant skill (Claude Code, CodeBuddy, Codex, OpenCode, Kilo Code, Cursor, Gemini CLI, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Pi, Devin CLI, Google Antigravity) - turn any folder of code, docs, papers, images, or videos into a queryable knowledge graph"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "LICENSE-MIT", "NOTICE"]
 keywords = ["claude", "claude-code", "codex", "opencode", "kilo", "cursor", "gemini", "aider", "kiro", "pi", "devin", "knowledge-graph", "rag", "graphrag", "obsidian", "community-detection", "tree-sitter", "leiden", "llm"]
 requires-python = ">=3.10"
-# Core install: languages Trifour consumers actually scan by default.
+# Core install: the languages fork consumers scan by default.
 # Additional grammars live under optional-dependencies ``langs-extra`` /
 # ``all`` — extractors soft-fail with a clear error when a grammar is absent.
 dependencies = [
@@ -112,7 +112,7 @@ commonlisp = ["tree-sitter-commonlisp"]
 # every platform, no C toolchain; optional because Robot Framework corpora are
 # QA-automation specific.
 robot = ["robotframework>=4.0"]
-# Trifour: `all` is the union of every other extra (see
+# Fork: `all` is the union of every other extra (see
 # tests/test_backend_extras.py). The slim core dependency set moved the
 # less-common grammars into ``langs-extra``, so they must be listed here
 # explicitly — upstream gets them for free from the core dependency set.
