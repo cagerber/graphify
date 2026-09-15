@@ -6130,7 +6130,9 @@ def _get_extractors(path: Path) -> list[Any]:
 
 
 def _get_extractor(path: Path) -> Any | None:
-    """Return the built-in extractor for *path*, or None if unsupported."""
+    """Return the correct extractor function for a file, or None if unsupported."""
+    # Trifour: built-in dispatch only — consumer [[tool.graphify.extractors]] rules
+    # are applied by _get_extractors(), which wraps this.
     if path.name.lower().endswith(".blade.php"):
         return extract_blade
     # MCP config files (.mcp.json, claude_desktop_config.json, ...) are routed

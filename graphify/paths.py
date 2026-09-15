@@ -1,13 +1,26 @@
-"""Canonical graphify output paths (GRAPHIFY_OUT env).
+"""Single source of truth for the graphify output-directory name.
 
-All runtime resolution goes through here so import-time defaults do not
-freeze ``graphify-out/`` when the env var is set later (e.g. consumer
-``.local/graphify-out``).
+The output directory is ``graphify-out`` by default and overridable with the
+``GRAPHIFY_OUT`` env var (worktrees or shared-output setups, #686). It accepts a
+relative name (``"graphify-out-feature"``) or an absolute path
+(``"/shared/graphify-out"``).
 
-Upstream #1423 symbols (``GRAPHIFY_OUT``, ``GRAPHIFY_OUT_NAME``, ``out_path``,
-``default_graph_json``) are exposed via :func:`graphify_out_rel` and PEP 562
-lazy attributes so env overrides remain call-time safe.
+This used to be duplicated as an identical ``_GRAPHIFY_OUT`` constant in
+``__main__``, ``cache``, and ``watch``, while ``security`` and ``callflow_html``
+hardcoded the literal ``"graphify-out"`` and silently ignored the override
+(#1423). Centralising it here keeps the name in one place. The value is read
+once at import time, matching the previous per-module constants — set
+``GRAPHIFY_OUT`` before the process starts (the normal worktree/shared-output
+flow) and every reader honours it.
 """
+# Trifour: resolution is call-time, not import-time (see ``graphify_out_rel`` /
+# ``graphify_out_dir``), so a consumer that sets GRAPHIFY_OUT after import — e.g.
+# ``.local/graphify-out`` per checkout — is still honoured. A module-level
+# assignment would shadow the lazy attributes, so ``GRAPHIFY_OUT`` /
+# ``GRAPHIFY_OUT_NAME`` are served by the PEP 562 ``__getattr__`` at the bottom of
+# this module instead of being assigned here, and ``out_path`` /
+# ``default_graph_json`` take an optional ``root`` to anchor a relative override.
+
 from __future__ import annotations
 
 import json
@@ -179,6 +192,9 @@ _TEST_FILENAME_PATTERNS = (
     re.compile(r".*\.spec\..+$", re.IGNORECASE),
     re.compile(r".*_spec\..+$", re.IGNORECASE),
     re.compile(r".*\.tests\.ps1$", re.IGNORECASE),
+    # Java `FooTest.java` / `FooTests.java`, C# `FooTests.cs` style. Require an
+    # uppercase-led `Test`/`Tests` immediately before the extension so plain
+    # words like "greatest"/"contest.cs" do not match.
     re.compile(r".*Test\.java$"),
     re.compile(r".*Tests\.java$"),
     re.compile(r".*Tests\.cs$"),
@@ -186,14 +202,32 @@ _TEST_FILENAME_PATTERNS = (
 
 
 def _is_test_path(path: str) -> bool:
-    """Classify a source path as a test path (case-insensitive, segment-aware)."""
+    """Classify a source path as a test path (case-insensitive, segment-aware).
+
+    Shared by extract.py and symbol_resolution.py so cross-file call resolution
+    treats test mocks/stubs identically. A path is a test path when:
+      * any whole path segment equals a known test dir name
+        (``tests``/``test``/``spec``/``specs``/``__tests__``), or
+      * the filename matches a known test-file naming convention.
+
+    Conservative on purpose: matches segments/filenames, never raw substrings,
+    so ``latest.py``, ``src/contest.py`` and ``src/greatest/x.py`` are NON-test.
+    """
     if not path:
         return False
+    # Accept both POSIX and Windows separators regardless of host OS so the
+    # classifier is stable across the mixed paths that flow through extraction.
     norm = str(path).replace("\\", "/")
     pure = PurePosixPath(norm)
-    for segment in pure.parts:
+    segments = list(pure.parts)
+    # Strip a leading drive/anchor segment (e.g. "C:/") that PureWindowsPath
+    # would surface; with the manual "\\"->"/" swap above PurePosixPath keeps
+    # the path body intact, but guard against a Windows drive embedded as a
+    # segment just in case.
+    for segment in segments:
         if segment.lower() in _TEST_DIR_SEGMENTS:
             return True
+        # A drive-letter colon segment like "c:" is never a test dir.
     filename = pure.name
     if not filename:
         return False
@@ -204,19 +238,33 @@ def _is_test_path(path: str) -> bool:
 
 
 def _path_proximity_winner(call_site_file: str, candidate_files: dict[str, str]) -> str | None:
-    """Pick the candidate whose source file is closest to the call site."""
+    """Pick the candidate whose source file is closest to the call site.
+
+    ``candidate_files`` maps candidate id -> its source_file. Returns a single
+    winning candidate id, or ``None`` when no proximity tier yields a unique
+    winner. Tiers, in order:
+
+      1. same file as the call site,
+      2. same directory,
+      3. longest common path-prefix (must be a strict, unique maximum).
+
+    Used only as a secondary tie-break after the test/non-test filter, so the
+    god-node guard still holds when proximity is genuinely ambiguous.
+    """
     if not call_site_file:
         return None
     call_norm = str(call_site_file).replace("\\", "/")
     call_dir = PurePosixPath(call_norm).parent
 
+    # Tier 1: exact same file.
     same_file = [cid for cid, f in candidate_files.items()
                  if str(f).replace("\\", "/") == call_norm]
     if len(same_file) == 1:
         return same_file[0]
     if len(same_file) > 1:
-        return None
+        return None  # genuinely ambiguous within one file; bail
 
+    # Tier 2: same directory.
     same_dir = [cid for cid, f in candidate_files.items()
                 if PurePosixPath(str(f).replace("\\", "/")).parent == call_dir]
     if len(same_dir) == 1:
@@ -224,6 +272,8 @@ def _path_proximity_winner(call_site_file: str, candidate_files: dict[str, str])
     if len(same_dir) > 1:
         return None
 
+    # Tier 3: longest common path-prefix, computed over path segments. The
+    # winner must be a strict unique maximum, else we bail (guard holds).
     call_parts = call_dir.parts
 
     def _common_prefix_len(f: str) -> int:
@@ -254,7 +304,23 @@ def disambiguate_ambiguous_candidates(
     candidate_files: dict[str, str],
     call_site_file: str,
 ) -> str | None:
-    """Resolve an ambiguous bare-name call to one candidate, or ``None``."""
+    """Resolve an ambiguous bare-name call to one candidate, or ``None``.
+
+    Shared god-node tie-breaker (#1553) used by both the inline cross-file call
+    pass in ``extract.py`` and ``symbol_resolution.resolve_cross_file_raw_calls``
+    so the heuristics stay aligned across languages. ``candidates`` is the list
+    of node ids sharing the callee's name; ``candidate_files`` maps each id ->
+    its source_file. Returns the surviving candidate id only when exactly one
+    survives; otherwise ``None`` (caller keeps the god-node guard / ``continue``).
+
+    Tie-breakers, in order:
+      1. NON-TEST preference. Classify the call site and each candidate as
+         test/non-test. When the call site is NON-test, drop test candidates.
+         When the call site IS a test file, prefer test-local candidates
+         (same file first, then any test candidate); fall back to the full set
+         only if no test candidate exists.
+      2. PATH PROXIMITY over whatever survived step 1.
+    """
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -265,6 +331,7 @@ def disambiguate_ambiguous_candidates(
     nontest_cands = [c for c in candidates if c not in set(test_cands)]
 
     if call_is_test:
+        # Prefer a test-local definition (same file) first.
         call_norm = str(call_site_file).replace("\\", "/")
         same_file_test = [
             c for c in test_cands
@@ -277,6 +344,7 @@ def disambiguate_ambiguous_candidates(
         else:
             survivors = nontest_cands or candidates
     else:
+        # Non-test call site: drop test mocks/stubs entirely.
         survivors = nontest_cands
 
     if len(survivors) == 1:
@@ -284,12 +352,14 @@ def disambiguate_ambiguous_candidates(
     if not survivors:
         return None
 
+    # Step 2: path proximity over the survivors.
     return _path_proximity_winner(
         call_site_file,
         {c: candidate_files.get(c, "") for c in survivors},
     )
 
-
+# Bare directory name even when GRAPHIFY_OUT is an absolute path. Used by path
+# guards that walk parents looking for the output directory by name.
 def graphify_out_rel() -> str:
     """Relative or absolute output directory from GRAPHIFY_OUT (default graphify-out).
 
@@ -309,7 +379,9 @@ def graphify_out_rel() -> str:
 
 
 def graphify_out_name() -> str:
-    """Bare directory name even when GRAPHIFY_OUT is an absolute path."""
+    """Bare directory name even when GRAPHIFY_OUT is an absolute path. Used by path
+    guards that walk parents looking for the output directory by name.
+    """
     return os.path.basename(os.path.normpath(graphify_out_rel()))
 
 
@@ -350,7 +422,14 @@ def graphify_out_for_watch(watch_path: Path | str | None = None) -> Path:
 
 
 def out_path(*parts: str, root: Path | str | None = None) -> Path:
-    """A path inside the configured output dir, e.g. ``out_path("cache")``."""
+    """A path inside the configured output dir, e.g. ``out_path("cache")``.
+
+    ``Path(GRAPHIFY_OUT) / ...`` resolves correctly for both a relative name
+    ("graphify-out") and an absolute override ("/shared/graphify-out").
+
+    Trifour: resolved at call time through :func:`graphify_out_dir`; *root*
+    anchors a relative override at the caller's project root.
+    """
     return graphify_out_dir(root).joinpath(*parts)
 
 
@@ -363,7 +442,14 @@ def default_graph_json_path(root: Path | str | None = None) -> str:
 
 
 def default_graph_json(root: Path | str | None = None) -> str:
-    """Package-wide fallback so a ``GRAPHIFY_OUT`` override is honoured (#1423)."""
+    """Default ``graph.json`` path under the configured output dir.
+
+    The package-wide fallback used by serve/build/benchmark/prs and the CLI read
+    commands so a ``GRAPHIFY_OUT`` override is honoured everywhere, not just where
+    the path is passed explicitly (#1423).
+
+    Trifour: resolved at call time (see ``default_graph_json_path``).
+    """
     return default_graph_json_path(root)
 
 

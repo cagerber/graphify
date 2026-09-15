@@ -2184,9 +2184,16 @@ def dispatch_command(cmd: str) -> None:
         gods = god_nodes(G, exclude_hubs_percentile=co_exclude_hubs)
         surprises = surprising_connections(G, communities)
         stages.mark("analyze")
-        # Where outputs land (#1747). Prefer writing beside `--graph` when it
-        # already sits under a GRAPHIFY_OUT directory; otherwise use call-time
-        # GRAPHIFY_OUT via graphify_out_for_watch (Trifour).
+        # Where outputs (GRAPH_REPORT.md, re-clustered graph.json, labels,
+        # analysis, html) land. When `--graph` points at a graph INSIDE a
+        # graphify-out/ dir (another project/tenant's output), write beside it,
+        # not into a stray graphify-out/ in the CWD (#1747). But when `--graph`
+        # points at an arbitrary path — e.g. a `backup/graph.json` archived
+        # before re-clustering (#934) — fall back to the CWD's graphify-out/,
+        # which is the restore-into-place workflow that test pins. The default
+        # (no --graph) case already has graph_json under watch_path/graphify-out.
+        # Trifour: the fallback resolves GRAPHIFY_OUT at call time via
+        # graphify_out_for_watch() instead of the import-time constant.
         _out_name = Path(_GRAPHIFY_OUT).name
         if graph_override is not None and graph_json.parent.name == _out_name:
             out = graph_json.parent

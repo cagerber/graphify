@@ -1,0 +1,10 @@
+# Prose deletions that are deliberate, for scripts/upstream_footprint.py --check.
+#
+# One entry per (file, upstream line number) that the fork intentionally does not
+# carry verbatim, with the reason. Keep this list tiny: an entry means we accept a
+# conflict whenever upstream touches that line.
+#
+# graphify/hooks.py:468 — upstream's comment contains mojibake ("ΓÇö" for an em
+# dash) inside a shell hook payload that is installed into users' .git/hooks; the
+# fork writes the em dash. Restoring the corrupted bytes would ship them to users.
+graphify/hooks.py:468

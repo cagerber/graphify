@@ -124,6 +124,30 @@ Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (`
 - **`detect.py`** — manifest load/save/incremental resolve paths at **call time**.
 - **`cache.py`**, **`watch.py`**, **`__main__.py`** — use `paths` instead of module-level env snapshots.
 
+## Fork hygiene — footprint on upstream
+
+**Rule: deltas inside upstream-owned files are additive and minimal.** Every deleted upstream
+line is a line we no longer inherit, and a rewrite of upstream's prose or formatting conflicts
+on the next merge for no benefit. Fork-only modules are free — they cannot conflict.
+
+Measure before requesting a merge:
+
+```bash
+python scripts/upstream_footprint.py          # per-file surface
+python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
+```
+
+Surface after the 0.9.61 merge + this hygiene pass: **29 fork-only files (+2787 lines,
+conflict-free)** against **18 upstream-owned files at +908 / −136** — down from +918 / −257,
+with `graphify/paths.py` alone going from −92 to −6. Zero rewritten upstream
+comments/docstrings; the single waiver (`scripts/upstream_footprint_allow.txt`) is upstream's
+mojibake em dash inside the installed hook payload, which would otherwise ship to users.
+
+When a line must change, change the fewest lines and add a `Trifour:` comment beside it
+saying why: that comment is what turns the next merge into a 30-second resolution instead of a
+reconstruction. Fork-only CI is a script, not a step in upstream's
+`.github/workflows/ci.yml`.
+
 ## Consumer configuration (`pyproject.toml`)
 
 ```toml

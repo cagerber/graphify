@@ -34,8 +34,9 @@ _PINNED='__PINNED_PYTHON__'
 if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "$_GFY_PROBE" 2>/dev/null; then
     GRAPHIFY_PYTHON="$_PINNED"
 fi
-# Second probe: read GRAPHIFY_OUT/.graphify_python (written by the skill and
+# Second probe: read graphify-out/.graphify_python (written by the skill and
 # CLI; survives uv-tool reinstalls and is the same source the README documents).
+# Trifour: honour the GRAPHIFY_OUT override — the file can live under a custom out dir.
 if [ -z "$GRAPHIFY_PYTHON" ]; then
     _GFY_PYTHON_FILE="${GRAPHIFY_OUT:-graphify-out}/.graphify_python"
     if [ -f "$_GFY_PYTHON_FILE" ]; then
@@ -183,12 +184,12 @@ try:
             _watchdog.start()
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
     _root = Path('.')
-    # Self-contained on purpose: tests/test_hooks.py exec's this snippet with only
-    # Path/os in scope, so the helper import has to live inside it. GRAPHIFY_OUT is
-    # resolved at call time (fork #1423); _out feeds the memory-lessons block.
+    # Trifour: the output dir is resolved at call time through the canonical helper
+    # (GRAPHIFY_OUT honoured, absolute-aware). The helper import lives INSIDE this
+    # snippet because tests/test_hooks.py exec's it with only Path/os in scope.
     from graphify.paths import graphify_out_dir
-    _out = str(graphify_out_dir(_root))
-    _saved = Path(_out) / '.graphify_root'
+    _out = os.environ.get('GRAPHIFY_OUT', 'graphify-out')
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
@@ -262,12 +263,12 @@ try:
     # (no changed_paths) is correct here. The flock inside _rebuild_code still
     # prevents pile-ups when commit + checkout fire back-to-back.
     _root = Path('.')
-    # Self-contained on purpose: tests/test_hooks.py exec's this snippet with only
-    # Path/os in scope, so the helper import has to live inside it. GRAPHIFY_OUT is
-    # resolved at call time (fork #1423); _out feeds the memory-lessons block.
+    # Trifour: the output dir is resolved at call time through the canonical helper
+    # (GRAPHIFY_OUT honoured, absolute-aware). The helper import lives INSIDE this
+    # snippet because tests/test_hooks.py exec's it with only Path/os in scope.
     from graphify.paths import graphify_out_dir
-    _out = str(graphify_out_dir(_root))
-    _saved = Path(_out) / '.graphify_root'
+    _out = os.environ.get('GRAPHIFY_OUT', 'graphify-out')
+    _saved = graphify_out_dir(_root) / '.graphify_root'
     if _saved.exists():
         _txt = _saved.read_text(encoding='utf-8-sig').strip()
         if _txt:
@@ -425,7 +426,8 @@ if [ -z "$CHANGED" ]; then
     exit 0
 fi
 
-# Skip when only GRAPHIFY_OUT artifacts changed (avoids rebuild loop when graph outputs are tracked in git)
+# Skip when only graphify-out/ artifacts changed (avoids rebuild loop when graph outputs are tracked in git)
+# Trifour: the configured out dir is used instead of the literal name.
 _NON_GRAPH=$(echo "$CHANGED" | grep -v "^${_GFY_OUT}/" || true)
 if [ -z "$_NON_GRAPH" ]; then
     exit 0
@@ -480,7 +482,8 @@ fi
 # branch switch but leaves the tree unchanged — nothing to rebuild (#2421).
 [ "$PREV_HEAD" = "$NEW_HEAD" ] && exit 0
 
-# Only run if the graph output directory exists (graph has been built before)
+# Only run if graphify-out/ exists (graph has been built before)
+# Trifour: the configured out dir is used instead of the literal name.
 if [ ! -d "$_GFY_OUT" ]; then
     exit 0
 fi

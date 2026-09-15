@@ -1816,7 +1816,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             explicit_cache=explicit_ignore_cache,
         )
 
-    # Always include <GRAPHIFY_OUT>/memory/ - query results filed back into the graph
+    # Always include graphify-out/memory/ - query results filed back into the graph
+    # Trifour: the configured out dir (graphify_out_rel) instead of the literal name.
     memory_dir = graphify_out_dir(root) / "memory"
     scan_paths = [root]
     if memory_dir.exists():
