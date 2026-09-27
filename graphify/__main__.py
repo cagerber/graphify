@@ -18,6 +18,60 @@ try:
 except Exception:
     __version__ = "unknown"
 
+def _unwrap_env(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        quote = value[0]
+        value = value[1:-1]
+        if quote == "'":
+            return value
+    return os.path.expanduser(os.path.expandvars(value))
+
+
+def _load_visible_env() -> None:
+    """Fill unset keys from .env, .env.local, and .env.shared up to the git root.
+
+    Already-exported values win. ``.env.example`` is not read. This runs before
+    ``GRAPHIFY_OUT`` is imported, because that name is bound once at import and
+    ``uv run`` does not load these files unless ``--env-file`` is passed.
+    """
+    names = (".env", ".env.local", ".env.shared")
+    current = Path.cwd().resolve()
+    roots: list[Path] = []
+    while True:
+        roots.append(current)
+        if (current / ".git").exists():
+            break
+        parent = current.parent
+        if parent == current:
+            roots = roots[:1]
+            break
+        current = parent
+    for directory in roots:
+        for name in names:
+            path = directory / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for raw in text.splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export ") :].strip()
+                key, sep, value = line.partition("=")
+                if not sep:
+                    continue
+                key = key.strip()
+                if not key or key in os.environ:
+                    continue
+                os.environ[key] = _unwrap_env(value.strip())
+
+
+_load_visible_env()
+
 # Output directory — override with GRAPHIFY_OUT env var for worktrees or shared-output setups.
 # Accepts a relative name ("graphify-out-feature") or an absolute path ("/shared/graphify-out").
 # Defined once in graphify.paths so the security/callflow path guards honour the
