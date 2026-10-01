@@ -40,3 +40,9 @@ paper/
 
 # macOS Finder metadata
 .DS_Store
+
+# Local environment files; templates stay tracked
+.env
+.env.*
+!.env.example
+!.env.sample
