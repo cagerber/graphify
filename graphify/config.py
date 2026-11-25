@@ -76,6 +76,22 @@ def enrich_flags(project_root: Path | str | None = None) -> dict[str, bool]:
 _CONFIG_CACHE: dict[tuple[str, int, int], "GraphifyConfig"] = {}
 
 
+def config_override() -> Path | None:
+    """``GRAPHIFY_CONFIG``: one TOML whose ``[tool.graphify]`` applies to every scan.
+
+    Lets a shared install carry the extractor rules for repos that do not declare
+    them. ``path_glob`` stays relative to the scanned project. A missing file is an
+    error: silently scanning without the extractors yields a wrong graph.
+    """
+    raw = (os.environ.get("GRAPHIFY_CONFIG") or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"GRAPHIFY_CONFIG does not name a file: {path}")
+    return path.resolve()
+
+
 def _find_pyproject(root: Path) -> Path | None:
     for parent in [root, *root.parents]:
         candidate = parent / "pyproject.toml"
@@ -92,7 +108,7 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
     ``mtime_ns``/size, so the entry is replaced rather than reused.
     """
     base = Path(root or ".").resolve()
-    pyproject = _find_pyproject(base)
+    pyproject = config_override() or _find_pyproject(base)
     if pyproject is None:
         return _unconfigured()
 

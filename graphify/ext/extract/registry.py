@@ -7,7 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-from graphify.config import ExtractorRule, load_graphify_config, match_glob
+from graphify.config import (
+    ExtractorRule,
+    config_override,
+    load_graphify_config,
+    match_glob,
+)
 
 __all__ = [
     "resolve_consumer_extractor",
@@ -23,8 +28,10 @@ def _repo_relative(path: Path, project_root: Path) -> str | None:
 
 
 def _find_project_root(start: Path) -> Path | None:
+    # With GRAPHIFY_CONFIG the scanned repo needs no pyproject.toml of its own.
+    markers = ("pyproject.toml", ".git") if config_override() else ("pyproject.toml",)
     for parent in [start.resolve(), *start.resolve().parents]:
-        if (parent / "pyproject.toml").is_file():
+        if any((parent / m).exists() for m in markers):
             return parent
     return None
 

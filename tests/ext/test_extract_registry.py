@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from graphify.detect import CODE_EXTENSIONS
 from graphify.extract import (
     _DISPATCH,
@@ -306,3 +308,28 @@ def test_post_extract_merge_config_no_op_without_spec(tmp_path):
         result, project_root=tmp_path, full_rebuild=True
     )
     assert out is result
+
+
+def test_graphify_config_override_applies_to_a_repo_without_a_pyproject(tmp_path, monkeypatch):
+    """A shared install carries the rules; the scanned repo declares nothing."""
+    home = tmp_path / "estate"
+    home.mkdir()
+    _write_fake_consumer(home)
+    (home / "graphify.toml").write_text(
+        '[[tool.graphify.extractors]]\nmodule = "consumer_ext.extract"\n'
+        'function = "extract_demo"\nextensions = [".cls"]\npath_glob = "src/**"\n',
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "src").mkdir()
+    cls = repo / "src" / "A.cls"
+    cls.write_text("Class A {}\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(home))
+    monkeypatch.setenv("GRAPHIFY_CONFIG", str(home / "graphify.toml"))
+
+    assert [fn.__name__ for fn in resolve_consumer_extractors(cls)] == ["extract_demo"]
+
+    monkeypatch.setenv("GRAPHIFY_CONFIG", str(home / "missing.toml"))
+    with pytest.raises(FileNotFoundError):
+        resolve_consumer_extractors(cls)

@@ -182,6 +182,7 @@ collapse_tests_dir = true
 |----------|---------|--------|
 | `GRAPHIFY_OUT` | `graphify-out` | Output directory (consumers typically use `.local/graphify-out`) |
 | `GRAPHIFY_OUT_NAME` | `graphify-out` | Name used when resolving defaults |
+| `GRAPHIFY_CONFIG` | unset | TOML whose `[tool.graphify]` replaces the scanned project's own |
 | `GRAPHIFY_CODE_EXTENSIONS` | from `[tool.graphify]` | Extra code suffixes, comma/space separated |
 | `GRAPHIFY_AST_PROGRESS_INTERVAL` | `1000` | AST progress log interval (large corpora) |
 | `GRAPHIFY_FOLDER_EDGES` | `1` | `enrich` / post-`update` folder edges |
