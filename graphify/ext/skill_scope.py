@@ -17,9 +17,9 @@ def skill_version_check_targets() -> set[Path]:
     """Skill install paths to compare against the running package version."""
     if not os.environ.get("GRAPHIFY_OUT", "").strip():
         # Imported lazily: these live in the CLI entry module, which calls us.
-        from graphify.__main__ import _PLATFORM_CONFIG, _platform_skill_destination
+        from graphify.__main__ import _platform_skill_destination, _skill_platforms
 
-        return {_platform_skill_destination(name) for name in _PLATFORM_CONFIG}
+        return {_platform_skill_destination(name) for name in _skill_platforms()}
 
     project_skill = Path(".agents/skills/graphify/SKILL.md")
     stamp = project_skill.parent / ".graphify_version"

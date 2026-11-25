@@ -49,6 +49,11 @@ class GraphifyConfig:
     post_extract_merge: str = ""
 
 
+def _unconfigured() -> GraphifyConfig:
+    """No ``[tool.graphify]``: no derived edges, so graphs match upstream's."""
+    return GraphifyConfig(folder_edges=False, pytest_enrich=False)
+
+
 def _env_bool(name: str, default: bool) -> bool:
     """Resolve a boolean from env when set; otherwise use *default*."""
     val = os.environ.get(name)
@@ -89,12 +94,12 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
     base = Path(root or ".").resolve()
     pyproject = _find_pyproject(base)
     if pyproject is None:
-        return GraphifyConfig()
+        return _unconfigured()
 
     try:
         stat = pyproject.stat()
     except OSError:
-        return GraphifyConfig()
+        return _unconfigured()
     key = (str(pyproject), stat.st_mtime_ns, stat.st_size)
     cached = _CONFIG_CACHE.get(key)
     if cached is not None:
@@ -103,12 +108,13 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
-        return GraphifyConfig()
+        return _unconfigured()
 
     section: dict[str, Any] = data.get("tool", {}).get("graphify", {})
     if not section:
-        _remember_config(key, GraphifyConfig())
-        return GraphifyConfig()
+        cfg = _unconfigured()
+        _remember_config(key, cfg)
+        return cfg
 
     rules: list[TestsCoversRule] = []
     for item in section.get("tests_covers", []):

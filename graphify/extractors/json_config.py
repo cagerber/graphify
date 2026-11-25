@@ -2,9 +2,64 @@
 from __future__ import annotations
 
 
+import os
 from pathlib import Path
 from graphify.extractors.base import _file_stem, _make_id, _read_text
+from graphify.extractors.resolution import _read_json_config, _resolve_js_module_path
 from graphify.ids import normalize_id
+
+
+def _local_extends_target(config: Path, ref: str) -> "Path | None":
+    """The on-disk config a relative `extends` names, or None (#5223).
+
+    tsc resolves a relative or absolute `extends` against the citing config's
+    directory and, when that file is missing and the value does not end in
+    `.json`, retries with `.json` appended. Anything else is a package
+    specifier, resolved through node_modules, and stays a stub.
+    """
+    if not (ref.startswith(("./", "../")) or os.path.isabs(ref)):
+        return None
+    cand = Path(os.path.normpath(config.parent / ref))
+    if cand.is_file():
+        return cand
+    if not ref.endswith(".json"):
+        with_json = cand.with_name(cand.name + ".json")
+        if with_json.is_file():
+            return with_json
+    return None
+
+
+def _paths_base(config: Path) -> "Path | None":
+    """Directory a config's `compilerOptions.paths` targets resolve against.
+
+    tsc uses `baseUrl` when one is in effect (the config's own, else the nearest
+    one inherited through `extends`, each resolved against the config declaring
+    it), and otherwise the directory of the config declaring `paths`. Returns
+    None when the chain leaves the scan (a package `extends`) before a baseUrl
+    is found, since the base can then not be known (#5223).
+    """
+    seen: set[str] = set()
+    current = config
+    while str(current) not in seen:
+        seen.add(str(current))
+        data = _read_json_config(current) or {}
+        opts = data.get("compilerOptions")
+        base = opts.get("baseUrl") if isinstance(opts, dict) else None
+        if isinstance(base, str) and base:
+            return Path(os.path.normpath(current.parent / base))
+        ext = data.get("extends")
+        if not ext:
+            return config.parent
+        # TS 5 array: later entries override earlier ones, so the last wins.
+        if isinstance(ext, list):
+            ext = next((e for e in reversed(ext) if isinstance(e, str)), None)
+        elif not isinstance(ext, str):
+            ext = None
+        nxt = _local_extends_target(current, ext) if ext else None
+        if nxt is None:
+            return None
+        current = nxt
+    return None
 
 
 _CONFIG_JSON_NAMES = frozenset({
@@ -18,8 +73,18 @@ _CONFIG_JSON_NAMES = frozenset({
 _CONFIG_JSON_KEYS = frozenset({
     "dependencies", "devDependencies", "peerDependencies",
     "optionalDependencies", "bundleDependencies", "bundledDependencies",
-    "extends", "$ref", "$schema", "compilerOptions",
+    "extends", "$schema", "compilerOptions",
 })
+
+# Root-level keys that only a JSON Schema *document* carries. A schema that
+# defines anything needs somewhere to put the definitions, and the spec's own
+# keywords for that are `$defs` (2020-12) and `definitions` (draft-07/04);
+# `$id` names the schema itself. Combined with `$schema` these separate "this
+# file IS a schema" from "this config POINTS AT a schema" -- the latter points
+# $schema at its own tool's schema (biomejs.dev, docs.renovatebot.com, ...),
+# never at the meta-schema, and never carries these markers.
+_SCHEMA_DEFINITION_KEYS = frozenset({"$defs", "definitions", "$id"})
+
 
 def _is_config_json(path: Path, obj_node, source: bytes) -> bool:
     """True if a .json file is a recognized config/manifest worth AST-extracting.
@@ -27,7 +92,24 @@ def _is_config_json(path: Path, obj_node, source: bytes) -> bool:
     Matches by filename first (cheap), then falls back to a top-level key probe
     so arbitrarily-named config files (e.g. ``api.tsconfig.json``,
     ``foo.eslintrc.json``) are still picked up. Returns False for data JSON so it
-    is skipped by the structural pass (#1224)."""
+    is skipped by the structural pass (#1224).
+
+    A JSON Schema is *not* a config manifest. `$schema` sits in the probe's key
+    set because configs legitimately carry it, but it is also the defining marker
+    of a schema -- so a schema document satisfied the probe and was walked in
+    full, re-opening the keyword-node explosion #1224 closed (#2255). One 160 KB
+    contract contributed 362 keyword nodes and ~12 schema-only communities. The
+    filename branches above run first, so `biome.json`/`renovate.json`/
+    `package.json` never depended on the probe; the probe only decides the fate
+    of arbitrarily-named files, which is why narrowing it is low-risk.
+
+    Documented boundary: a hand-written schema carrying `$schema` but no
+    `$defs`/`definitions`/`$id` is still walked. Catching it would need a
+    keyword-density heuristic, which would risk skipping a real config whose keys
+    happen to overlap schema vocabulary -- the worse error, since it drops
+    structure silently (#1224). Pinned by
+    ``tests/test_json_schema_config.py::test_minimal_schema_without_defs_or_id_is_still_walked``.
+    """
     name = path.name.casefold()
     if name in _CONFIG_JSON_NAMES:
         return True
@@ -35,7 +117,9 @@ def _is_config_json(path: Path, obj_node, source: bytes) -> bool:
     if name.endswith((".eslintrc.json", ".prettierrc.json", ".babelrc.json",
                       "tsconfig.json", "jsconfig.json")):
         return True
-    # Top-level key probe: scan the root object's immediate keys (no deep walk).
+    # Collect the root object's immediate keys once (no deep walk), so the
+    # schema check below and the config probe agree on the same key set.
+    root_keys: set[str] = set()
     for top_key in obj_node.children:
         if top_key.type != "pair":
             continue
@@ -43,9 +127,15 @@ def _is_config_json(path: Path, obj_node, source: bytes) -> bool:
         if key_node is None:
             continue
         kc = key_node.child_by_field_name("string_content")
-        text = _read_text(kc, source) if kc else _read_text(key_node, source).strip('"\'')
-        if text in _CONFIG_JSON_KEYS:
-            return True
+        root_keys.add(_read_text(kc, source) if kc
+                      else _read_text(key_node, source).strip('"\''))
+    # A file that declares the meta-schema AND defines something IS a schema.
+    if "$schema" in root_keys and (root_keys & _SCHEMA_DEFINITION_KEYS):
+        return False
+    # Top-level key probe. `$ref` is deliberately absent: a root-level `$ref` is
+    # a schema construct and never a config signal (#2255).
+    if root_keys & _CONFIG_JSON_KEYS:
+        return True
     return False
 
 def extract_json(path: Path) -> dict:
@@ -53,9 +143,10 @@ def extract_json(path: Path) -> dict:
 
     Data-shaped JSON (eval fixtures, datasets, GeoJSON, API response dumps) is
     deliberately skipped — AST-walking it produced hundreds of orphan key-nodes
-    and duplicate communities that swamped real structure (#1224). Recognition
-    is by filename (package.json, tsconfig.json, …) or a top-level key probe
-    (dependencies / extends / $ref / $schema / compilerOptions)."""
+    and duplicate communities that swamped real structure (#1224). JSON Schema
+    documents are skipped for the same reason (#2255). Recognition is by filename
+    (package.json, tsconfig.json, …) or a top-level key probe (dependencies /
+    extends / $schema / compilerOptions)."""
     _JSON_MAX_BYTES = 1_048_576  # 1 MiB — skip large fixture dumps / GeoJSON blobs
 
     try:
@@ -71,7 +162,10 @@ def extract_json(path: Path) -> dict:
         with path.open("rb") as _f:
             source = _f.read(_JSON_MAX_BYTES + 1)
         if len(source) > _JSON_MAX_BYTES:
-            return {"nodes": [], "edges": [], "error": "json file too large to index"}
+            # Declined by design, like the data-JSON branch below. Reporting it as
+            # an error made the file a failed source, which the manifest never
+            # stamps, so an unchanged tree re-extracted it on every update.
+            return {"nodes": [], "edges": [], "skipped": "json file over 1 MiB (not indexed)"}
         language = Language(tsjson.language())
         parser = Parser(language)
         tree = parser.parse(source)
@@ -98,7 +192,7 @@ def extract_json(path: Path) -> dict:
                           "source_file": str_path, "source_location": f"L{line}"})
 
     def add_edge(src: str, tgt: str, relation: str, line: int,
-                 context: str | None = None) -> None:
+                 context: str | None = None, target_file: "Path | None" = None) -> None:
         if not src or not tgt or src == tgt:
             return
         edge = {"source": src, "target": tgt, "relation": relation,
@@ -106,7 +200,16 @@ def extract_json(path: Path) -> dict:
                 "source_location": f"L{line}", "weight": 1.0}
         if context:
             edge["context"] = context
+        if target_file is not None:
+            edge["target_file"] = str(target_file)
         edges.append(edge)
+
+    _base_memo: list = []
+
+    def paths_base() -> "Path | None":
+        if not _base_memo:
+            _base_memo.append(_paths_base(path))
+        return _base_memo[0]
 
     file_nid = _make_id(str(path))
     add_node(file_nid, path.name, 1)
@@ -175,17 +278,47 @@ def extract_json(path: Path) -> dict:
                     if item.type == "string":
                         content = item.child_by_field_name("string_content")
                         ref = _read_text(content, source) if content else _read_text(item, source).strip('"\'')
-                        if ref:
+                        local = _local_extends_target(path, ref) if ref else None
+                        if local is not None:
+                            add_edge(key_nid, _make_id(str(local)), "extends", line,
+                                     context="import", target_file=local)
+                        elif ref:
                             ref_nid = _make_id("ref", ref)
                             if ref_nid:
                                 add_node(ref_nid, ref, line, file_type="concept")
                                 add_edge(key_nid, ref_nid, "extends", line, context="import")
 
+            elif val.type == "array" and parent_key == "paths" and "*" not in key:
+                # An exact `paths` alias names the module it maps to; tsc takes
+                # the first target that exists. Wildcard aliases need an
+                # expansion policy and get no edge (#5223).
+                base = paths_base()
+                for item in val.children if base is not None else ():
+                    if item.type != "string":
+                        continue
+                    content = item.child_by_field_name("string_content")
+                    t = _read_text(content, source) if content else _read_text(item, source).strip('"')
+                    if not t or "*" in t:
+                        continue
+                    hit = _resolve_js_module_path(Path(os.path.normpath(base / t)))
+                    if hit is not None and hit.is_file():
+                        add_edge(file_nid, _make_id(str(hit)), "references", line,
+                                 target_file=hit)
+                        break
+
             elif val.type == "string":
                 content = val.child_by_field_name("string_content")
                 val_text = _read_text(content, source) if content else _read_text(val, source).strip('"\'')
 
-                if key == "extends" and val_text:
+                local = (_local_extends_target(path, val_text)
+                         if key == "extends" and val_text else None)
+                if local is not None:
+                    # A local config: edge only, stamped so extract()'s
+                    # target_file pass repoints it at that file's node (#5223).
+                    add_edge(file_nid, _make_id(str(local)), "extends", line,
+                             context="import", target_file=local)
+
+                elif key == "extends" and val_text:
                     # Namespace external refs to avoid ID collision with file nodes (J-4)
                     ref_nid = _make_id("ref", val_text)
                     if ref_nid:
@@ -198,7 +331,7 @@ def extract_json(path: Path) -> dict:
                     if ref_nid:
                         add_edge(parent_nid, ref_nid, "references", line)
 
-                elif parent_key in _DEP_KEYS and val_text:
+                elif parent_key in _DEP_KEYS and val_text.strip():
                     # Two defects fixed here, both from the #1764 shape:
                     #
                     # 1. The edge ran `key_nid -> dep_nid`, and both nodes carry
@@ -217,10 +350,34 @@ def extract_json(path: Path) -> dict:
                     #    `types` could then be collapsed onto a same-named local
                     #    module by build.py's alias index -- the #1638 failure
                     #    mode reached through a different door.
+                    #
+                    # 3. Moving that edge to the manifest also cut the only link between the
+                    #    dependency's key node (its manifest entry, reached through
+                    #    `dependencies --contains-->`) and its ref node, so the entry and
+                    #    the code that imports the package landed in different communities
+                    #    (#4569). `key_nid --declares--> dep_nid` reconnects them, and the
+                    #    entry is relabelled `name@range` so the two nodes no longer share a
+                    #    label: a same-label edge is the `react -> react` view #1764
+                    #    removed, and two `react` nodes made `explain`/`affected`
+                    #    ambiguous. The ref node keeps the bare name, which is what
+                    #    `import "react"` resolves to. The range is one line, capped at 40
+                    #    characters; a blank one links nothing (like an empty one) and the
+                    #    entry keeps its bare name.
                     dep_nid = _make_id("ref", key)
                     if dep_nid:
                         add_node(dep_nid, key, line, file_type="concept")
                         add_edge(file_nid, dep_nid, "imports", line, context="import")
+                        add_edge(key_nid, dep_nid, "declares", line)
+                        version = " ".join(val_text.split())
+                        if len(version) > 40:
+                            version = version[:37] + "..."
+                        # `add_node` kept the first node under this id (the same key under
+                        # two sibling blocks shares it), so relabel only the pair that
+                        # node's line belongs to: label and line then name one entry.
+                        for node in nodes:
+                            if node["id"] == key_nid and node["source_location"] == f"L{line}":
+                                node["label"] = f"{key}@{version}"
+                                break
 
     # Entry: find root document → object
     doc = root

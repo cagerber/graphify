@@ -4,7 +4,7 @@
 paths or product names. Consumer integration docs live in the consuming repo.
 
 Upstream: [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) — default branch `v8`.
-Base of this fork: tag **`v0.9.61`** (`fe66389`), i.e. this delta applies to upstream `v0.9.61` as-is.
+Base of this fork: tag **`v0.9.120`**, i.e. this delta applies to upstream `v0.9.120` as-is.
 
 Version scheme: **`<upstream version>+ext.<n>`** — a PEP 440 *local version segment*. `0.9.61-ext.1`
 is not a legal version string (anything before the `+` parses as a pre-release marker, and `ext` is
@@ -75,6 +75,11 @@ whose `.cls` files are something else entirely.
     java/c/cpp/bash/json) and moves the rest to `langs-extra` or per-language extras that soft-fail
     when absent; `all` remains the union of every other extra.
 
+**Unconfigured runs behave as upstream.** The call-time, project-root-anchored output rules apply
+only when the environment names `GRAPHIFY_OUT`; without it the output dir stays inside the scanned
+directory. Folder links and pytest enrichment run only for a project with a `[tool.graphify]` section,
+and a folder link never joins two nodes that already have an edge.
+
 ## Where the code lives
 
 Fork-only modules — conflict-free by construction, they cannot collide with an upstream merge:
@@ -115,8 +120,8 @@ python scripts/upstream_footprint.py          # per-file surface
 python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
 ```
 
-Surface of this delta against `v0.9.61`: **35 fork-only files** and **19 upstream-owned files**
-modified (`+792 / -152`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
+Surface of this delta against `v0.9.120`: **35 fork-only files** and **20 upstream-owned files**
+modified (`+942 / -220`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
 `scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`

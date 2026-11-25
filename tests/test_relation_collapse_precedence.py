@@ -18,6 +18,12 @@ sampling — and callflow's relation filter
 Alphabetical order carries no meaning. These tests pin that a generic relation
 never overwrites a specific one, in either arrival order, and that nothing else
 about the collapse changed.
+
+One opposite-direction exception: a `method` or `contains` edge and a usage
+edge running back the other way share one undirected pair (a member that
+calls or constructs its owner, or reads its static property or constant). The
+membership edge survives; any other opposite relation keeps last-write. Same-direction
+`contains` vs `calls` stays unranked. A directed graph keeps both arcs.
 """
 import pytest
 
@@ -99,8 +105,10 @@ def test_two_generic_relations_keep_previous_behaviour():
 
 
 def test_two_specific_relations_keep_previous_behaviour():
-    """Deliberately NOT ranked against each other — `contains` vs `calls` is a
-    cross-axis judgement this collapse does not need to make."""
+    """Same direction is deliberately NOT ranked — `contains` vs `calls` along
+    one direction is a cross-axis judgement this collapse does not make.
+    Opposite directions are a different pair of facts; see
+    test_structural_membership_beats_an_opposite_call."""
     G = build_from_json(_extraction([_edge("calls"), _edge("contains")]))
     assert _relation(G) in {"calls", "contains"}
 
@@ -182,3 +190,125 @@ def test_unknown_relation_is_treated_as_specific():
                   [_edge("references"), _edge("custom_rel")]):
         G = build_from_json(_extraction(order))
         assert _relation(G) == "custom_rel", f"order {[e['relation'] for e in order]}"
+
+
+_MEMBER_USAGE = ["calls", "indirect_call", "instantiates", "uses_static_prop", "references_constant"]
+
+
+@pytest.mark.parametrize("structural", ["method", "contains"])
+@pytest.mark.parametrize("usage", _MEMBER_USAGE)
+@pytest.mark.parametrize("structural_src, structural_tgt", [("a", "b"), ("b", "a")])
+def test_structural_membership_beats_an_opposite_usage(structural, usage, structural_src, structural_tgt):
+    """Type -method/contains-> member and member -usage-> type share one
+    undirected pair: a factory's constructor call, or a member reading its own
+    class's static property or constant (#2391, #2791). Whichever endpoint id
+    sorts later used to win, so the usage erased the membership edge and the
+    member dropped out of every type walk. The membership edge survives, with
+    its own direction and location, in either id order. Still exactly one edge."""
+    G = build_from_json(_extraction([
+        _edge(structural, src=structural_src, tgt=structural_tgt, source_location="L4"),
+        _edge(usage, src=structural_tgt, tgt=structural_src, source_location="L5"),
+    ]))
+    d = edge_data(G, "a", "b")
+    assert d.get("relation") == structural
+    assert (d.get("_src"), d.get("_tgt")) == (structural_src, structural_tgt)
+    assert d.get("source_location") == "L4"
+    assert G.number_of_edges() == 1
+
+
+@pytest.mark.parametrize("other", ["inherits", "implements", "imports_from", "custom_rel"])
+def test_opposite_non_usage_relation_keeps_last_write(other):
+    """Only usage edges lose to membership. `Outer -contains-> Inner` with
+    `Inner -inherits-> Outer` is two real facts, and this collapse does not rank
+    them: the membership edge is stored first (`a` sorts first), and the later
+    opposite edge replaces it as before."""
+    G = build_from_json(_extraction([
+        _edge("contains", src="a", tgt="b", source_location="L4"),
+        _edge(other, src="b", tgt="a", source_location="L5"),
+    ]))
+    d = edge_data(G, "a", "b")
+    assert d.get("relation") == other
+    assert G.number_of_edges() == 1
+
+
+def test_php_method_reading_its_own_static_member_keeps_its_method_edge(tmp_path):
+    """The reported repro: `Counter::initialize()` reads `Counter::$limit` and
+    `Counter::cap()` reads `Counter::LIMIT`."""
+    from graphify.extract import extract
+
+    src = tmp_path / "Counter.php"
+    src.write_text(
+        "<?php\n"
+        "class Counter {\n"
+        "    const LIMIT = 3;\n"
+        "    public static $limit = 3;\n"
+        "    public function initialize() {\n"
+        "        return Counter::$limit;\n"
+        "    }\n"
+        "    public function cap() {\n"
+        "        return Counter::LIMIT;\n"
+        "    }\n"
+        "}\n"
+    )
+    extraction = extract([src])
+    labels = {n["id"]: n.get("label") for n in extraction["nodes"]}
+    usages = {(labels[e["source"]], e["relation"], labels[e["target"]]) for e in extraction["edges"]}
+    assert (".initialize()", "uses_static_prop", "Counter") in usages
+    assert (".cap()", "references_constant", "Counter") in usages
+
+    G = build_from_json(extraction)
+    by_label = {d.get("label"): n for n, d in G.nodes(data=True)}
+    owner = by_label["Counter"]
+    for member_label in (".initialize()", ".cap()"):
+        member = by_label[member_label]
+        d = edge_data(G, owner, member)
+        assert d.get("relation") == "method", member_label
+        assert (d.get("_src"), d.get("_tgt")) == (owner, member), member_label
+
+
+@pytest.mark.parametrize("usage", _MEMBER_USAGE)
+def test_directed_graph_keeps_method_and_the_reverse_usage(usage):
+    """Opposite directions are different arcs once the graph is directed, so
+    both facts survive. The undirected rule must not drop the usage here."""
+    G = build_from_json(_extraction([
+        _edge("method", src="a", tgt="b", source_location="L4"),
+        _edge(usage, src="b", tgt="a", source_location="L5"),
+    ]), directed=True)
+    assert G.is_directed()
+    assert G.number_of_edges() == 2
+    assert edge_data(G, "a", "b").get("relation") == "method"
+    assert (edge_data(G, "a", "b").get("_src"), edge_data(G, "a", "b").get("_tgt")) == ("a", "b")
+    assert edge_data(G, "b", "a").get("relation") == usage
+    assert edge_data(G, "b", "a").get("source_location") == "L5"
+
+
+def test_same_direction_method_and_calls_stay_unranked():
+    """The membership-vs-usage rule applies only when the edges run in opposite
+    directions. Along one direction the pair is still a single unranked edge."""
+    G = build_from_json(_extraction([
+        _edge("method", src="a", tgt="b"),
+        _edge("calls", src="a", tgt="b"),
+    ]))
+    assert G.number_of_edges() == 1
+    assert _relation(G) in {"method", "calls"}
+
+
+def test_same_relation_collision_preserves_extracted_over_inferred():
+    """An EXTRACTED AST edge must not be downgraded by a later INFERRED edge."""
+    for order in (
+        [
+            _edge("calls", confidence="EXTRACTED", confidence_score=1.0, source_file="a.py", source_location="L724"),
+            _edge("calls", confidence="INFERRED", confidence_score=0.95, source_file="note.md", source_location=None),
+        ],
+        [
+            _edge("calls", confidence="INFERRED", confidence_score=0.95, source_file="note.md", source_location=None),
+            _edge("calls", confidence="EXTRACTED", confidence_score=1.0, source_file="a.py", source_location="L724"),
+        ],
+    ):
+        G = build_from_json(_extraction(order))
+        d = edge_data(G, "a", "b")
+        assert d.get("relation") == "calls"
+        assert d.get("confidence") == "EXTRACTED"
+        assert d.get("confidence_score") == 1.0
+        assert d.get("source_file") == "a.py"
+        assert d.get("source_location") == "L724"

@@ -84,6 +84,9 @@ def _star_edges_for_groups(
     relation: str,
 ) -> int:
     added = 0
+    # A derived link never joins a pair that already has an edge: an undirected
+    # graph keeps one edge per pair, so it would replace the extracted one.
+    linked = {frozenset((e.get("source"), e.get("target"))) for e in edges}
     for group_key in sorted(groups):
         node_ids = sorted(groups[group_key])
         if len(node_ids) < 2:
@@ -91,6 +94,8 @@ def _star_edges_for_groups(
         hub_id = node_ids[0]
         hub_sf = hub_meta[hub_id].get("source_file") or group_key
         for other_id in node_ids[1:]:
+            if frozenset((hub_id, other_id)) in linked:
+                continue
             if _append_edge(
                 edges,
                 existing,
@@ -357,7 +362,7 @@ _DERIVED_FOLDER_RELATIONS = frozenset({"same_directory", "shared_folder"})
 
 
 def topology_for_compare(graph_data: dict) -> dict:
-    """``_canonical_topology_for_compare`` minus enrich-generated folder links.
+    """``_topology_signature_for_compare`` minus enrich-generated folder links.
 
     The folder links are assigned to the alphabetically-first file hub of a group
     and are indistinguishable from an authored edge to the graph builders: on an
@@ -372,14 +377,14 @@ def topology_for_compare(graph_data: dict) -> dict:
     """
     # Imported lazily: this module is imported by watch at module scope, and the
     # canonical form lives there.
-    from graphify.watch import _canonical_topology_for_compare
+    from graphify.watch import _topology_signature_for_compare
 
-    topology = _canonical_topology_for_compare(graph_data)
+    graph = dict(graph_data)
     for key in ("links", "edges"):
-        items = topology.get(key)
+        items = graph.get(key)
         if not isinstance(items, list):
             continue
-        topology[key] = [
+        graph[key] = [
             edge
             for edge in items
             if not (
@@ -387,5 +392,5 @@ def topology_for_compare(graph_data: dict) -> dict:
                 and edge.get("relation") in _DERIVED_FOLDER_RELATIONS
             )
         ]
-    return topology
+    return _topology_signature_for_compare(graph)
 

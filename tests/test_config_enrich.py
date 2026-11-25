@@ -10,11 +10,13 @@ from graphify.config import enrich_flags, load_graphify_config
 
 
 @pytest.mark.unit
-def test_enrich_flags_defaults() -> None:
-    flags = enrich_flags()
-    assert flags["folder_edges"] is True
+def test_enrich_flags_defaults(tmp_path: Path) -> None:
+    # No [tool.graphify]: no derived edges are added to the graph.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    flags = enrich_flags(tmp_path)
+    assert flags["folder_edges"] is False
     assert flags["folder_affinity"] is True
-    assert flags["pytest_enrich"] is True
+    assert flags["pytest_enrich"] is False
     assert flags["heuristic_labels"] is False
 
 

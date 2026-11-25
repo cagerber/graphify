@@ -46,3 +46,7 @@ paper/
 .env.*
 !.env.example
 !.env.sample
+# MSBuild restore/build output: editors with C# tooling restore the fixture
+# .csproj files on open
+tests/fixtures/**/obj/
+tests/fixtures/**/bin/

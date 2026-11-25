@@ -46,6 +46,62 @@ def test_cohesion_score_range():
         score = cohesion_score(G, nodes)
         assert 0.0 <= score <= 1.0
 
+def test_cohesion_score_ignores_self_loops():
+    # #3558: a recursive calls self-loop must not inflate the ratio. Two nodes
+    # with one real edge plus a self-loop is still fully cohesive (1.0), not 2.0.
+    G = nx.Graph()
+    G.add_edge("a", "b")
+    G.add_edge("a", "a")  # recursion self-loop
+    score = cohesion_score(G, ["a", "b"])
+    assert score == 1.0
+
+def test_cohesion_score_self_loops_only_is_zero():
+    # Self-loops alone are not inter-node connectivity.
+    G = nx.Graph()
+    G.add_nodes_from(["a", "b", "c"])
+    for n in ("a", "b", "c"):
+        G.add_edge(n, n)
+    score = cohesion_score(G, ["a", "b", "c"])
+    assert score == 0.0
+
+def test_cohesion_score_range_with_self_loops():
+    # The 0..1 bound holds even when every node carries a self-loop.
+    G = nx.complete_graph(4)
+    G = nx.relabel_nodes(G, {i: str(i) for i in G.nodes})
+    for n in list(G.nodes):
+        G.add_edge(n, n)
+    score = cohesion_score(G, list(G.nodes))
+    assert 0.0 <= score <= 1.0
+    assert score == 1.0
+
+
+def test_cohesion_score_multigraph_parallel_edges_bounded():
+    # MultiGraph with parallel edges between same endpoints must not exceed 1.0.
+    MG = nx.MultiGraph()
+    MG.add_edge("A", "B", relation="imports")
+    MG.add_edge("A", "B", relation="calls")
+    MG.add_edge("A", "B", relation="references")
+    MG.add_edge("A", "A", relation="calls")  # self loop
+    score = cohesion_score(MG, ["A", "B"])
+    assert 0.0 <= score <= 1.0
+    assert score == 1.0
+
+    # With a third unconnected node, exactly 1 out of 3 possible pairs is connected
+    MG.add_node("C")
+    score_3 = cohesion_score(MG, ["A", "B", "C"])
+    assert abs(score_3 - (1.0 / 3.0)) < 1e-9
+
+
+def test_cohesion_score_digraph_mutual_edges_bounded():
+    # DiGraph with reciprocal edges (A->B and B->A) represents one connected pair
+    DG = nx.DiGraph()
+    DG.add_edge("A", "B")
+    DG.add_edge("B", "A")
+    DG.add_edge("A", "A")
+    score = cohesion_score(DG, ["A", "B"])
+    assert 0.0 <= score <= 1.0
+    assert score == 1.0
+
 def test_score_all_keys_match_communities():
     G = make_graph()
     communities = cluster(G)
@@ -98,6 +154,28 @@ def test_remap_communities_to_previous_assigns_deterministic_new_ids():
     assert list(remapped.keys()) == [0, 1]
     assert remapped[0] == ["x", "y", "z"]
     assert remapped[1] == ["m"]
+
+
+def test_remap_community_overlap_ties_prefer_lower_ids():
+    # All four overlaps are equal. Old ID 5 and new ID 11 win even though
+    # both ID 9 and ID 12 occur first in the inputs.
+    communities = {12: ["d", "a"], 11: ["c", "b"], 13: ["new"]}
+    previous = {"d": 9, "c": 9, "a": 5, "b": 5, "removed": 9}
+
+    assert remap_communities_to_previous(communities, previous) == {
+        0: ["new"],
+        5: ["b", "c"],
+        9: ["a", "d"],
+    }
+
+
+def test_remap_community_overlap_counts_distinct_members_and_preserves_membership():
+    # A repeated member contributes one vote for ID 9, leaving the tie to
+    # ID 5. Remapping changes the ID and preserves the sorted member list.
+    communities = {12: ["a", "b", "a"]}
+    previous = {"a": 9, "b": 5}
+
+    assert remap_communities_to_previous(communities, previous) == {5: ["a", "a", "b"]}
 
 
 def _grouping(partition):
@@ -203,3 +281,61 @@ def test_partition_is_invariant_to_edge_endpoint_orientation():
     assert _grouping(_partition(forward, 1.0)) == _grouping(_partition(flipped, 1.0)), (
         "partition drifted with edge-endpoint orientation / insertion order"
     )
+
+
+# --- partition cache (topology-keyed) ---------------------------------------
+
+def test_cache_hit_matches_fresh_recompute(tmp_path):
+    """A warm cache must return byte-identical community assignment to a fresh
+    (uncached) recompute on the same graph."""
+    G = make_graph()
+    fresh = cluster(G)
+    cluster(G, cache_dir=tmp_path)  # warm the cache
+    cache_file = tmp_path / ".graphify_partition_cache.json"
+    assert cache_file.exists()
+    cached = cluster(G, cache_dir=tmp_path)  # hit
+    assert cached == fresh
+
+
+def test_cache_miss_on_topology_change_recomputes(tmp_path, monkeypatch):
+    """When the graph topology changes, the stale cache must be ignored and the
+    fresh partition recomputed and re-persisted."""
+    G = make_graph()
+    cluster(G, cache_dir=tmp_path)
+    old_hash = json.loads(
+        (tmp_path / ".graphify_partition_cache.json").read_text()
+    )["topology_hash"]
+
+    # Add a node+edge: topology changes -> different hash -> recompute.
+    H = G.copy()
+    victim = sorted(H.nodes(), key=str)[0]
+    H.add_node("brand_new_node")
+    H.add_edge(victim, "brand_new_node")
+
+    recompute_sentinel = {"called": False}
+    import graphify.cluster as _cm
+    real_partition = _cm._partition
+
+    def _spy(*a, **kw):
+        recompute_sentinel["called"] = True
+        return real_partition(*a, **kw)
+
+    monkeypatch.setattr(_cm, "_partition", _spy)
+    out = cluster(H, cache_dir=tmp_path)
+    assert recompute_sentinel["called"], "topology change must force a recompute"
+    assert "brand_new_node" in {n for nodes in out.values() for n in nodes}
+    new_hash = json.loads(
+        (tmp_path / ".graphify_partition_cache.json").read_text()
+    )["topology_hash"]
+    assert new_hash != old_hash
+
+
+def test_cache_fails_open_on_corrupt_sidecar(tmp_path):
+    """A corrupt cache file must not raise: cluster() falls back to recompute."""
+    G = make_graph()
+    fresh = cluster(G)
+    (tmp_path / ".graphify_partition_cache.json").write_text("{not valid json")
+    out = cluster(G, cache_dir=tmp_path)
+    assert out == fresh  # recomputed, and valid cache rewritten
+    # the corrupt file was replaced by a valid one
+    json.loads((tmp_path / ".graphify_partition_cache.json").read_text())
