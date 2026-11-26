@@ -84,3 +84,17 @@ def test_cross_file_reference_stub_reaches_the_definition(tmp_path, monkeypatch)
     for node in result["nodes"]:
         graph.add_node(node["id"], **node)
     assert resolve_seed(graph, "P.b") == "sym_b"
+
+
+def test_path_and_explain_resolve_a_node_ref():
+    import networkx as nx
+
+    from graphify.serve import _find_node, _resolve_path_endpoint
+
+    graph = nx.DiGraph()
+    graph.add_node("m", label="Record", node_ref="App.Utils.Status.Record", file_type="code")
+    graph.add_node("other", label="Record", node_ref="App.Other.Record", file_type="code")
+    graph.add_node("stub", label="Record", node_ref="App.Utils.Status.Record", file_type="concept")
+
+    assert _find_node(graph, "App.Utils.Status.Record") == ["m"]
+    assert _resolve_path_endpoint(graph, "App.Utils.Status.Record()")[0] == "m"

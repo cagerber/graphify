@@ -2362,6 +2362,21 @@ def _no_member_match_message(G: nx.Graph, label: str) -> str | None:
     return msg
 
 
+def _node_ref_matches(G: nx.Graph, label: str) -> list[str]:
+    """Nodes whose `node_ref` (a consumer's fully qualified symbol name) is `label`."""
+    index = G.graph.get("_node_ref_index")
+    if index is None:
+        index = {}
+        for nid, d in G.nodes(data=True):
+            if d.get("node_ref"):
+                index.setdefault(str(d["node_ref"]).lower(), []).append(nid)
+        G.graph["_node_ref_index"] = index
+    hits = index.get(label.strip().removesuffix("()").lower(), [])
+    # A reference stub's concept node must not make the definition ambiguous.
+    defined = [n for n in hits if G.nodes[n].get("file_type") != "concept"]
+    return list(defined or hits)
+
+
 def _find_node_tiers(
     G: nx.Graph, label: str
 ) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -2402,6 +2417,12 @@ def _find_node_tiers(
             scoped = _resolve_path_scoped_symbol(G, path_part, symbol_part)
             if scoped:
                 return scoped, [], [], []
+
+    # A fully qualified name carried as `node_ref` names the node outright;
+    # its label is only the last segment.
+    ref_hits = _node_ref_matches(G, label)
+    if ref_hits:
+        return [], ref_hits, [], []
 
     # A dotted Python symbol (`pkg.mod.func`, or the `pkg.mod:func` entry-point
     # form) names a module path plus a symbol. Tokenized as-is it matches no

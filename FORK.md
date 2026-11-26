@@ -87,6 +87,7 @@ and a folder link never joins two nodes that already have an edge.
 13. **Reference stubs and qualified seeds** — a consumer node marked `ref_stub` is folded into the
     one file that defines its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the
     definition; `affected` also resolves a seed by a consumer node's `node_ref`.
+    `path` and `explain` (CLI and MCP) resolve a `node_ref` the same way, as an exact hit.
 
 ## Where the code lives
 
