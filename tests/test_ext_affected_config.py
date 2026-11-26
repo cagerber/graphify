@@ -98,3 +98,24 @@ def test_path_and_explain_resolve_a_node_ref():
 
     assert _find_node(graph, "App.Utils.Status.Record") == ["m"]
     assert _resolve_path_endpoint(graph, "App.Utils.Status.Record()")[0] == "m"
+
+
+def test_namespaced_calls_members_and_derived_locations():
+    import networkx as nx
+
+    from graphify.affected import format_affected
+    from graphify.ext.query.callers import direct_callers_text
+
+    graph = nx.DiGraph()
+    graph.add_node("cls", label="Status", source_file="Status.cls", source_location="L1")
+    graph.add_node("m", label="Record", source_file="Status.cls", source_location="L5")
+    graph.add_node("c", label="Run", source_file="Run.cls", source_location="L2")
+    graph.add_edge("m", "cls", relation="structural.member_of")
+    graph.add_edge(
+        "c", "m", relation="structural.calls",
+        source_file="x/.graphify-derived", source_location="L1",
+    )
+
+    assert "<-- Run [structural.calls]" in direct_callers_text(graph, "Record")
+    text = format_affected(graph, "Status", relations=("structural.calls",), seed="cls")
+    assert "- Run [structural.calls] Run.cls:L2" in text

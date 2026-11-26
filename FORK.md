@@ -88,6 +88,8 @@ and a folder link never joins two nodes that already have an edge.
     one file that defines its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the
     definition; `affected` also resolves a seed by a consumer node's `node_ref`.
     `path` and `explain` (CLI and MCP) resolve a `node_ref` the same way, as an exact hit.
+    `callers` counts namespaced call relations (`*.calls`), `affected` also seeds members stored as
+    `*.member_of`, and a hit whose edge cites a derived `.graphify-*` marker shows its own file.
 
 ## Where the code lives
 

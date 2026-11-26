@@ -21,7 +21,8 @@ CALL_RELATIONS: frozenset[str] = frozenset({
 
 def is_call_edge(data: dict) -> bool:
     rel = str(data.get("relation") or "").strip().lower()
-    if rel in CALL_RELATIONS:
+    # A consumer namespaces its relations, e.g. `structural.calls`.
+    if rel.rsplit(".", 1)[-1] in CALL_RELATIONS:
         return True
     return str(data.get("context") or "").strip().lower() == "call"
 

@@ -420,6 +420,14 @@ def affected_nodes(
                 seen.add(member)
                 queue.append((member, 0))
                 member_queue.append(member)
+        # Consumers that store membership the other way round (member -> owner).
+        if isinstance(graph, nx.DiGraph):
+            for member, _t, data in graph.in_edges(parent, data=True):
+                member = str(member)
+                if str(data.get("relation", "")).endswith(".member_of") and member not in seen:
+                    seen.add(member)
+                    queue.append((member, 0))
+                    member_queue.append(member)
 
     supertype_cache: dict[str, list[str]] = {}
     # Overridden members walked without being reported; one that a real edge
@@ -545,7 +553,9 @@ def format_affected(
 
     for hit in hits:
         data = graph.nodes[hit.node_id]
-        if hit.via_location:
+        # A derived edge cites a `.graphify-*` marker, not a file to open.
+        derived = (hit.via_file or "").rsplit("/", 1)[-1].startswith(".graphify-")
+        if hit.via_location and not derived:
             # The relation SITE in this node's file (call/import/reference line),
             # labeled by [via_relation] so it's never mistaken for a def line.
             location = f"{hit.via_file or data.get('source_file') or '-'}:{hit.via_location}"
