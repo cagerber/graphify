@@ -47,6 +47,11 @@ class GraphifyConfig:
     code_extensions: list[str] = field(default_factory=list)
     # Optional ``module:function`` invoked after full AST rebuild (consumer KG extensions).
     post_extract_merge: str = ""
+    # Consumer relation names `affected` follows on top of its defaults:
+    # `affected_relations` point user -> dependency (like `calls`);
+    # `affected_relations_reversed` point dependency -> user.
+    affected_relations: list[str] = field(default_factory=list)
+    affected_relations_reversed: list[str] = field(default_factory=list)
 
 
 def _unconfigured() -> GraphifyConfig:
@@ -203,9 +208,19 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
         extractors=extractors,
         code_extensions=code_extensions,
         post_extract_merge=str(section.get("post_extract_merge") or "").strip(),
+        affected_relations=_str_list(section.get("affected_relations")),
+        affected_relations_reversed=_str_list(section.get("affected_relations_reversed")),
     )
     _remember_config(key, cfg)
     return cfg
+
+
+def _str_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
 
 
 def _remember_config(key: tuple[str, int, int], cfg: GraphifyConfig) -> None:

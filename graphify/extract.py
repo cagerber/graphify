@@ -11694,12 +11694,9 @@ def _bypass_ast_cache(path: Path) -> bool:
     """Skip AST cache when built-in rules require it or a consumer extractor owns the path."""
     if effective_suffix(path) in _JS_CACHE_BYPASS_SUFFIXES:
         return True
-    try:
-        from graphify.ext.extract.registry import resolve_consumer_extractors
+    from graphify.ext.extract.registry import resolve_consumer_extractors
 
-        return bool(resolve_consumer_extractors(path))
-    except ImportError:
-        return False
+    return bool(resolve_consumer_extractors(path))
 
 
 def _get_extractors(path: Path) -> list[Any]:
@@ -11710,14 +11707,13 @@ def _get_extractors(path: Path) -> list[Any]:
         return [extract_mcp_config]
     if is_package_manifest_path(path):
         return [extract_package_manifest]
-    try:
-        from graphify.ext.extract.registry import resolve_consumer_extractors
+    from graphify.ext.extract.registry import resolve_consumer_extractors
 
-        consumers = resolve_consumer_extractors(path)
-        if consumers:
-            return consumers
-    except ImportError:
-        pass
+    # A configured extractor that cannot be imported raises: skipping it would
+    # build a graph that silently lacks that whole language.
+    consumers = resolve_consumer_extractors(path)
+    if consumers:
+        return consumers
     if is_consumer_owned_suffix(path):
         # The consumer declares this suffix but no rule matched this path: never
         # fall through to a built-in extractor for another language (upstream maps

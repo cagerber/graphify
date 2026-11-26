@@ -80,6 +80,11 @@ only when the environment names `GRAPHIFY_OUT`; without it the output dir stays 
 directory. Folder links and pytest enrichment run only for a project with a `[tool.graphify]` section,
 and a folder link never joins two nodes that already have an edge.
 
+12. **Consumer impact relations, loud extractor failure** — `[tool.graphify] affected_relations`
+    (edges pointing user -> dependency) and `affected_relations_reversed` (dependency -> user) extend
+    what `affected` follows by default; an explicit `relations` filter is left as given. A configured
+    consumer extractor that cannot be imported raises instead of being skipped.
+
 ## Where the code lives
 
 Fork-only modules — conflict-free by construction, they cannot collide with an upstream merge:

@@ -8,6 +8,8 @@ import unicodedata
 
 import networkx as nx
 
+from graphify.config import load_graphify_config
+
 
 DEFAULT_AFFECTED_RELATIONS = (
     "calls",
@@ -372,8 +374,10 @@ def affected_nodes(
     *,
     relations: Iterable[str] = DEFAULT_AFFECTED_RELATIONS,
     depth: int = 2,
+    reversed_relations: Iterable[str] = (),
 ) -> list[AffectedHit]:
     relation_set = set(relations)
+    reversed_set = set(reversed_relations)
     seen = {seed}
     queue: deque[tuple[str, int]] = deque([(seed, 0)])
     hits: list[AffectedHit] = []
@@ -438,10 +442,20 @@ def affected_nodes(
                         incoming.append((data["_src"], current, data))
                 else:
                     incoming.append((neighbor, current, data))
-        for source, _target, data in incoming:
+        matched = [(s, d) for s, _t, d in incoming if str(d.get("relation", "")) in relation_set]
+        if reversed_set:
+            # Edges stored dependency -> user: the affected node is the target.
+            if hasattr(graph, "out_edges"):
+                outgoing = graph.out_edges(current, data=True)
+            else:
+                outgoing = [
+                    (current, d.get("_tgt", n), d)
+                    for _, n, d in graph.edges(current, data=True)
+                    if d.get("_src", current) == current
+                ]
+            matched += [(t, d) for _s, t, d in outgoing if str(d.get("relation", "")) in reversed_set]
+        for source, data in matched:
             relation = str(data.get("relation", ""))
-            if relation not in relation_set:
-                continue
             source = str(source)
             queued = source in stepping_stones
             if queued:
@@ -496,15 +510,23 @@ def format_affected(
     seed: str | None = None,
 ) -> str:
     relation_list = tuple(relations)
+    reversed_list: tuple[str, ...] = ()
+    # Explicit relations from the caller are a filter and stay exactly as given.
+    if relation_list == DEFAULT_AFFECTED_RELATIONS:
+        cfg = load_graphify_config(root)
+        relation_list += tuple(r for r in cfg.affected_relations if r not in relation_list)
+        reversed_list = tuple(cfg.affected_relations_reversed)
     if seed is None:
         seed = resolve_seed(graph, query, root)
     if seed is None:
         return f"No unique node match for {query}"
 
-    hits = affected_nodes(graph, seed, relations=relation_list, depth=depth)
+    hits = affected_nodes(
+        graph, seed, relations=relation_list, depth=depth, reversed_relations=reversed_list
+    )
     lines = [
         f"Affected nodes for {_node_label(graph, seed)}",
-        f"Relations: {', '.join(relation_list)}",
+        f"Relations: {', '.join(relation_list + reversed_list)}",
         f"Depth: {depth}",
     ]
     if not hits:
