@@ -17,6 +17,7 @@ from graphify.paths import consumed, read_graph_json
 from graphify.security import sanitize_label, check_graph_file_size_cap, _CONTROL_CHAR_RE
 from graphify.build import _CONFIDENCE_RANK, edge_datas, edge_evidence, has_parallel_links
 from graphify.paths import default_graph_json as _default_graph_json, _is_test_path
+from graphify.ext.query.symbols import node_ref_matches  # Fork
 
 try:
     with warnings.catch_warnings():
@@ -2362,21 +2363,6 @@ def _no_member_match_message(G: nx.Graph, label: str) -> str | None:
     return msg
 
 
-def _node_ref_matches(G: nx.Graph, label: str) -> list[str]:
-    """Nodes whose `node_ref` (a consumer's fully qualified symbol name) is `label`."""
-    index = G.graph.get("_node_ref_index")
-    if index is None:
-        index = {}
-        for nid, d in G.nodes(data=True):
-            if d.get("node_ref"):
-                index.setdefault(str(d["node_ref"]).lower(), []).append(nid)
-        G.graph["_node_ref_index"] = index
-    hits = index.get(label.strip().removesuffix("()").lower(), [])
-    # A reference stub's concept node must not make the definition ambiguous.
-    defined = [n for n in hits if G.nodes[n].get("file_type") != "concept"]
-    return list(defined or hits)
-
-
 def _find_node_tiers(
     G: nx.Graph, label: str
 ) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -2418,9 +2404,9 @@ def _find_node_tiers(
             if scoped:
                 return scoped, [], [], []
 
-    # A fully qualified name carried as `node_ref` names the node outright;
-    # its label is only the last segment.
-    ref_hits = _node_ref_matches(G, label)
+    # Fork: a fully qualified name carried as `node_ref` names the declaring
+    # node outright; its label is only the last segment.
+    ref_hits = node_ref_matches(G, label)
     if ref_hits:
         return [], ref_hits, [], []
 

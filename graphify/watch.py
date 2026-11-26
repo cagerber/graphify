@@ -2879,8 +2879,15 @@ def _rebuild_code(
                     normalize_source=_nsf,
                 )
                 from graphify.extractors.resolution import _cpp_reconciliation_paths
+                from graphify.ext.extract.ref_stubs import ref_stub_referrer_paths  # Fork
                 extract_targets = _cpp_reconciliation_paths(
                     extract_targets, ctx_graph.get("nodes", []), project_root,
+                    available_paths=code_files,
+                    changed_paths=[Path(p) for p in deleted_source_identities],
+                )
+                # Fork: re-read the files that point at a symbol this batch drops.
+                extract_targets = ref_stub_referrer_paths(
+                    extract_targets, ctx_graph, project_root,
                     available_paths=code_files,
                     changed_paths=[Path(p) for p in deleted_source_identities],
                 )
@@ -2926,6 +2933,7 @@ def _rebuild_code(
                         "_ts_fields", "_ts_static_fields",
                         "_py_fixture", "_py_return_type", "_go_fields",
                         "_go_package_path",
+                        "ref_stub",  # Fork: a persisted stub is not a definition
                     ):
                         if node.get(marker) or (marker.startswith("_cpp_") and isinstance(node.get(marker), (dict, list))):
                             ctx_node[marker] = node[marker]

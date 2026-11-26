@@ -8,7 +8,8 @@ import unicodedata
 
 import networkx as nx
 
-from graphify.config import load_graphify_config
+from graphify.config import load_graphify_config  # Fork: consumer relations
+from graphify.ext.query.symbols import node_ref_matches, same_symbol  # Fork
 
 
 DEFAULT_AFFECTED_RELATIONS = (
@@ -210,6 +211,12 @@ def resolve_seed(graph: nx.Graph, query: str, root: Path | None = None) -> str |
     query = query.rstrip("/\\") or query
     if query in graph:
         return query
+    # Fork: a consumer's fully qualified symbol name (`node_ref`) names its
+    # declaring node. It beats every label match (a data file may label a node
+    # with the same text), and an ambiguous one stays unresolved.
+    ref_matches = node_ref_matches(graph, query)
+    if ref_matches:
+        return ref_matches[0] if len(ref_matches) == 1 else None
     # `path::Symbol` and dotted Python names resolve exactly as `explain` does
     # (#4792); checked before the label tiers, which cannot express them.
     qualified = resolve_reference_forms(graph, query)
@@ -234,16 +241,6 @@ def resolve_seed(graph: nx.Graph, query: str, root: Path | None = None) -> str |
     ]
     if len(bare_name_matches) == 1:
         return bare_name_matches[0]
-    # A consumer's fully qualified symbol name (`node_ref`); labels are short.
-    ref_matches = [
-        (str(node_id), data)
-        for node_id, data in graph.nodes(data=True)
-        if _normalize_label(str(data.get("node_ref", ""))) == query_lower
-    ]
-    if len(ref_matches) > 1:
-        ref_matches = [m for m in ref_matches if m[1].get("file_type") != "concept"]
-    if len(ref_matches) == 1:
-        return ref_matches[0][0]
     # Compare paths in repo-relative form. Only this branch is path-shaped; the
     # label branches above keep the query verbatim.
     query_path = _normalize_label(_as_repo_relative(query, root))
@@ -384,12 +381,14 @@ def affected_nodes(
     *,
     relations: Iterable[str] = DEFAULT_AFFECTED_RELATIONS,
     depth: int = 2,
-    reversed_relations: Iterable[str] = (),
+    reversed_relations: Iterable[str] = (),  # Fork: edges stored dependency -> user
 ) -> list[AffectedHit]:
     relation_set = set(relations)
     reversed_set = set(reversed_relations)
-    seen = {seed}
-    queue: deque[tuple[str, int]] = deque([(seed, 0)])
+    # Fork: every view of the seed's symbol is the seed, so their users count too.
+    seeds = [seed, *(same_symbol(graph, seed) if seed in graph else ())]
+    seen = set(seeds)
+    queue: deque[tuple[str, int]] = deque((s, 0) for s in seeds)
     hits: list[AffectedHit] = []
 
     # #1669: seed the reverse walk with the root's own member nodes (one outward
@@ -399,7 +398,7 @@ def affected_nodes(
     # otherwise. The member nodes are seeds only (not reported as hits), and
     # `method`/`contains` stay out of the general relation-filtered walk, so this
     # adds no forward noise anywhere else.
-    member_queue = deque([seed])
+    member_queue = deque(seeds)  # Fork: members of every view
     while member_queue:
         parent = member_queue.popleft()
         if hasattr(graph, "out_edges"):
@@ -420,7 +419,7 @@ def affected_nodes(
                 seen.add(member)
                 queue.append((member, 0))
                 member_queue.append(member)
-        # Consumers that store membership the other way round (member -> owner).
+        # Fork: consumers that store membership member -> owner.
         if isinstance(graph, nx.DiGraph):
             for member, _t, data in graph.in_edges(parent, data=True):
                 member = str(member)
@@ -437,6 +436,12 @@ def affected_nodes(
         current, current_depth = queue.popleft()
         if current_depth >= depth:
             continue
+        # Fork: a user of another view of `current`'s symbol depends on it too.
+        for twin in same_symbol(graph, current):
+            if twin not in seen:
+                seen.add(twin)
+                stepping_stones.add(twin)
+                queue.appendleft((twin, current_depth))
         # A caller bound to the supertype member a method overrides depends on
         # the override too, so walk that member's callers at the same depth. The
         # member itself did not change: like the seed's members above, it is a
@@ -460,6 +465,7 @@ def affected_nodes(
                         incoming.append((data["_src"], current, data))
                 else:
                     incoming.append((neighbor, current, data))
+        # Fork: the filter moved here so reversed relations can join the matches.
         matched = [(s, d) for s, _t, d in incoming if str(d.get("relation", "")) in relation_set]
         if reversed_set:
             # Edges stored dependency -> user: the affected node is the target.
@@ -528,7 +534,7 @@ def format_affected(
     seed: str | None = None,
 ) -> str:
     relation_list = tuple(relations)
-    reversed_list: tuple[str, ...] = ()
+    reversed_list: tuple[str, ...] = ()  # Fork: consumer relations
     # Explicit relations from the caller are a filter and stay exactly as given.
     if relation_list == DEFAULT_AFFECTED_RELATIONS:
         cfg = load_graphify_config(root)
@@ -539,12 +545,12 @@ def format_affected(
     if seed is None:
         return f"No unique node match for {query}"
 
-    hits = affected_nodes(
+    hits = affected_nodes(  # Fork: passes the reversed relations
         graph, seed, relations=relation_list, depth=depth, reversed_relations=reversed_list
     )
     lines = [
         f"Affected nodes for {_node_label(graph, seed)}",
-        f"Relations: {', '.join(relation_list + reversed_list)}",
+        f"Relations: {', '.join(relation_list + reversed_list)}",  # Fork
         f"Depth: {depth}",
     ]
     if not hits:
@@ -555,7 +561,7 @@ def format_affected(
         data = graph.nodes[hit.node_id]
         # A derived edge cites a `.graphify-*` marker, not a file to open.
         derived = (hit.via_file or "").rsplit("/", 1)[-1].startswith(".graphify-")
-        if hit.via_location and not derived:
+        if hit.via_location and not derived:  # Fork: skip derived markers
             # The relation SITE in this node's file (call/import/reference line),
             # labeled by [via_relation] so it's never mistaken for a def line.
             location = f"{hit.via_file or data.get('source_file') or '-'}:{hit.via_location}"

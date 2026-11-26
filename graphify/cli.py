@@ -2420,7 +2420,9 @@ def dispatch_command(cmd: str) -> None:
                 query,
                 relations=relations or DEFAULT_AFFECTED_RELATIONS,
                 depth=depth,
-                root=graph_root,
+                # Fork: consumer relations come from the scanned project, which an
+                # output directory outside it only names through `.graphify_root`.
+                root=_graph_root_for(gp),
                 seed=seed,
             )
         )
@@ -5182,6 +5184,13 @@ def dispatch_command(cmd: str) -> None:
                         available_paths=[Path(p) for p in files_by_type.get("code", [])],
                         changed_paths=[Path(p) for p in [*deleted_files, *excluded_files, *graph_stale_sources]],
                     )
+                    # Fork: re-read the files that point at a symbol this batch drops.
+                    from graphify.ext.extract.ref_stubs import ref_stub_referrer_paths
+                    code_files = ref_stub_referrer_paths(
+                        code_files, _ctx_graph, _ctx_root,
+                        available_paths=[Path(p) for p in files_by_type.get("code", [])],
+                        changed_paths=[Path(p) for p in [*deleted_files, *excluded_files, *graph_stale_sources]],
+                    )
                     _ctx_live.difference_update(_ctx_identity(p) for p in code_files)
                     for _node in _ctx_graph.get("nodes", []):
                         if not _node.get("id") or not _ctx_is_ast_tier(_node):
@@ -5208,6 +5217,7 @@ def dispatch_command(cmd: str) -> None:
                             "_ts_fields", "_ts_static_fields",
                             "_py_fixture", "_py_return_type", "_go_fields",
                             "_go_package_path",
+                            "ref_stub",  # Fork: a persisted stub is not a definition
                         ):
                             if _node.get(_marker) or (_marker.startswith("_cpp_") and isinstance(_node.get(_marker), (dict, list))):
                                 _ctx_node[_marker] = _node[_marker]

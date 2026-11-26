@@ -34,6 +34,7 @@ from .ids import make_id, normalize_id as _normalize_id
 from .paths import default_graph_json as _default_graph_json
 from .paths import is_absolute_any_platform as _is_abs
 from .validate import VALID_CONFIDENCES, validate_extraction
+from .ext.extract.ref_stubs import drop_superseded_stubs  # Fork
 
 
 # Deterministic (AST) extractors emit source_location "L<line>"; the semantic
@@ -3191,6 +3192,9 @@ def build_merge(
         ]
         # Other deleted records and edges stay until the normal prune below:
         # it needs their connectivity to identify newly orphaned import stubs.
+
+    # Fork: a fresh definition replaces the saved reference stub of its id.
+    existing_nodes = drop_superseded_stubs(existing_nodes, new_chunks)
 
     base = (
         [{"nodes": existing_nodes, "edges": existing_edges, "hyperedges": carried_hyperedges}]

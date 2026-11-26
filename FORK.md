@@ -84,12 +84,19 @@ and a folder link never joins two nodes that already have an edge.
     (edges pointing user -> dependency) and `affected_relations_reversed` (dependency -> user) extend
     what `affected` follows by default; an explicit `relations` filter is left as given. A configured
     consumer extractor that cannot be imported raises instead of being skipped.
-13. **Reference stubs and qualified seeds** — a consumer node marked `ref_stub` is folded into the
-    one file that defines its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the
-    definition; `affected` also resolves a seed by a consumer node's `node_ref`.
-    `path` and `explain` (CLI and MCP) resolve a `node_ref` the same way, as an exact hit.
+13. **Reference stubs** — a consumer node marked `ref_stub` is folded into the one file that defines
+    its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the definition. This holds
+    on incremental builds too: a saved stub gives way to a new definition, and when the file hosting a
+    symbol stops emitting it, the consumer files pointing at it are read again so their edges survive.
+    Links made by the post-extract merge hook are still refreshed by a full rebuild only.
+14. **Qualified names** — `affected`, `path`, `explain` and `callers` (CLI and MCP) resolve a
+    consumer's `node_ref` before any label (`graphify/ext/query/symbols.py`). Several nodes may carry
+    one `node_ref`; the declaring one is chosen by structure (it owns `*.member_of` members, is a
+    member, or the others are linked from it), never by consumer node kinds, and two declarations stay
+    ambiguous. `affected` counts the users of every other view of that symbol in the same repo.
     `callers` counts namespaced call relations (`*.calls`), `affected` also seeds members stored as
     `*.member_of`, and a hit whose edge cites a derived `.graphify-*` marker shows its own file.
+    CLI `affected` reads consumer relations from the project named by `.graphify_root`.
 
 ## Where the code lives
 
@@ -99,22 +106,29 @@ Fork-only modules — conflict-free by construction, they cannot collide with an
 |---|---|
 | `graphify/config.py` | `[tool.graphify]` loader, extractor rules, consumer code extensions |
 | `graphify/ext/extract/{registry,consumer,post}.py` | extractor registration, dispatch + stub, post-extract merge |
-| `graphify/ext/query/callers.py` | direct-inbound-call resolution |
+| `graphify/ext/query/{callers,symbols}.py` | direct-inbound-call and `node_ref` resolution |
+| `graphify/ext/extract/ref_stubs.py` | reference-stub folding, full and incremental |
 | `graphify/ext/skill_scope.py` | skill-version check scope policy |
 | `graphify/enrich.py`, `heuristic_labels.py`, `node_kind.py`, `node_paths.py` | post-build enrich, heuristic labels, node kinds, path helpers |
 | `graphify/viz_contract.py`, `viz_layers.py`, `graphify/ext/viz/*` | viz protocol, layers, builders |
 | `scripts/upstream_footprint*.py/.txt` | fork-only guard rail (not wired into upstream CI) |
-| `tests/test_{enrich,config_enrich,heuristic_labels,node_kind,skill_version_scope,viz_layers,cli_keyboard_interrupt}.py`, `tests/ext/*` | fork tests |
+| `tests/test_{enrich,config_enrich,ext_affected_config,heuristic_labels,node_kind,skill_version_scope,viz_layers,cli_keyboard_interrupt}.py`, `tests/ext/*` | fork tests |
 
 Fork code inside upstream-owned files is limited to the **hook points** themselves:
 
 - `graphify/extract.py` — `_get_extractors()`, `_path_has_extractor()`, `_bypass_ast_cache()`,
   `_ast_progress_interval()` and the merge call sites that dispatch into the registry.
+  `extract()` also calls `fold_ref_stubs` before id disambiguation.
 - `graphify/paths.py` — the call-time `GRAPHIFY_OUT` resolver family re-exported for upstream's
   existing call sites.
+- `graphify/affected.py` — consumer and reversed relations, `node_ref` seeds, the views of a symbol.
+- `graphify/serve.py` — one `node_ref` tier in `_find_node_tiers`.
+- `graphify/watch.py`, `graphify/cli.py` — the incremental builds forward `ref_stub` and call
+  `ref_stub_referrer_paths`; `cli.py` also takes `affected`'s config root from `.graphify_root`.
+- `graphify/build.py` — `build_merge` calls `drop_superseded_stubs`.
 
-Nothing else: `graphify/serve.py` is byte-identical to upstream, and `watch.py`, `__main__.py`,
-`cli.py`, `detect.py`, `cache.py` hold no fork-only function.
+Nothing else: `watch.py`, `__main__.py`, `cli.py`, `detect.py`, `cache.py` hold no fork-only
+function.
 
 ## Keeping it mergeable
 
@@ -131,8 +145,8 @@ python scripts/upstream_footprint.py          # per-file surface
 python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
 ```
 
-Surface of this delta against `v0.9.120`: **35 fork-only files** and **20 upstream-owned files**
-modified (`+942 / -220`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
+Surface of this delta against `v0.9.120`: **38 fork-only files** and **23 upstream-owned files**
+modified (`+1027 / -230`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
 `scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`
