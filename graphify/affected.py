@@ -234,6 +234,16 @@ def resolve_seed(graph: nx.Graph, query: str, root: Path | None = None) -> str |
     ]
     if len(bare_name_matches) == 1:
         return bare_name_matches[0]
+    # A consumer's fully qualified symbol name (`node_ref`); labels are short.
+    ref_matches = [
+        (str(node_id), data)
+        for node_id, data in graph.nodes(data=True)
+        if _normalize_label(str(data.get("node_ref", ""))) == query_lower
+    ]
+    if len(ref_matches) > 1:
+        ref_matches = [m for m in ref_matches if m[1].get("file_type") != "concept"]
+    if len(ref_matches) == 1:
+        return ref_matches[0][0]
     # Compare paths in repo-relative form. Only this branch is path-shaped; the
     # label branches above keep the query verbatim.
     query_path = _normalize_label(_as_repo_relative(query, root))

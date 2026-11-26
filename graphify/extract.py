@@ -109,6 +109,7 @@ from graphify.ext.extract.consumer import (
 
 from graphify.extractors.models import LanguageConfig, _JS_CACHE_BYPASS_SUFFIXES, _NamespaceExportFact, _StarExportFact, _SymbolAliasFact, _SymbolDeclarationFact, _SymbolExportFact, _SymbolImportFact, _SymbolResolutionFacts, _SymbolUseFact, _WORKSPACE_PACKAGE_CACHE  # noqa: E402,F401
 
+from graphify.ext.extract.ref_stubs import fold_ref_stubs
 from graphify.extractors.resolution import (  # noqa: E402,F401
     _DECLDEF_HEADER_SUFFIXES,
     _DECLDEF_IMPL_SUFFIXES,
@@ -13177,6 +13178,7 @@ def extract(
     # canonical half; it would miss and leave them on a dead id. Run first, it
     # splits only genuinely distinct nodes; the merge then joins the halves by
     # type path, whatever their (salted) ids.
+    fold_ref_stubs(all_nodes, resolution_context_nodes or ())
     _disambiguate_colliding_node_ids(all_nodes, all_edges, all_raw_calls, root)
     _merge_csharp_partial_class_nodes(per_file, all_nodes, all_edges, paths, root)
     _canonicalize_csharp_namespace_nodes(all_nodes, all_edges)

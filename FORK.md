@@ -84,6 +84,9 @@ and a folder link never joins two nodes that already have an edge.
     (edges pointing user -> dependency) and `affected_relations_reversed` (dependency -> user) extend
     what `affected` follows by default; an explicit `relations` filter is left as given. A configured
     consumer extractor that cannot be imported raises instead of being skipped.
+13. **Reference stubs and qualified seeds** — a consumer node marked `ref_stub` is folded into the
+    one file that defines its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the
+    definition; `affected` also resolves a seed by a consumer node's `node_ref`.
 
 ## Where the code lives
 
