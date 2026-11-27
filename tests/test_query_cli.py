@@ -80,6 +80,9 @@ def test_callers_cli(monkeypatch, tmp_path, capsys):
     assert "Direct callers of extract" in out
     assert "cluster" in out
     assert "1 caller edge" in out
+    # Fork: a callers lookup orients the agent like query/path/explain do, so the
+    # strict guard must see it (dropped once by an upstream merge).
+    assert (tmp_path / "cache" / "last_query_stamp").is_file()
 
 
 def test_query_cli_keeps_stock_fallback_with_persisted_trigram_index(monkeypatch, tmp_path, capsys):
