@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/Graphify-Labs/graphify/releases)
 
-## Unreleased (fork)
+## 0.9.120+ext.2 (2026-11-27, fork)
 
 - **Breaking (fork):** nothing is sent to an LLM or cloud service unless you ask. API keys, cloud credentials, `OLLAMA_*` variables and an installed `claude` CLI no longer select a backend; pass `--backend NAME` or export `GRAPHIFY_BACKEND`. This covers `extract`, `--dedup-llm`, `label`, `cluster-only`, `prs --triage`, the Python API (`extract_corpus_parallel` no longer defaults to `kimi`) and the skill's Gemini use.
 - **Breaking (fork):** a project's `.env` files set only local tuning variables, a relative `GRAPHIFY_OUT`, and `GRAPHIFY_BACKEND=none`. Keys, base URLs, proxies, `GRAPHIFY_ALLOW_LOCAL_PROVIDERS` and `GRAPHIFY_CONFIG` must come from your own environment.
