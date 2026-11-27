@@ -626,6 +626,10 @@ def _resolve_triage_backend(requested: str | None = None) -> tuple[str, str]:
     if wanted not in BACKENDS:
         problem = f"unknown backend {wanted!r}" if wanted else "no LLM backend requested"
         raise ValueError(f"{problem}: {NO_BACKEND_HINT}")
+    # triage_with_opus has no client for the others and would print nothing.
+    supported = ("claude", "claude-cli", "gemini", "kimi", "ollama", "openai")
+    if wanted not in supported:
+        raise ValueError(f"triage cannot use {wanted!r}; use one of: {', '.join(supported)}")
     return wanted, (os.environ.get("GRAPHIFY_TRIAGE_MODEL")
                     or _TRIAGE_MODEL_DEFAULTS.get(wanted)
                     or _default_model_for_backend(wanted))
@@ -720,6 +724,7 @@ def triage_with_opus(prs: list[PRInfo], base: str, backend_name: str | None = No
 
         elif backend == "claude-cli":
             import platform as _platform, shutil as _shutil, subprocess as _sp
+            from graphify.llm import _claude_cli_cwd  # Fork
             _claude = "claude"
             if _platform.system() == "Windows":
                 _claude = _shutil.which("claude.cmd") or _shutil.which("claude") or "claude"
@@ -727,6 +732,7 @@ def triage_with_opus(prs: list[PRInfo], base: str, backend_name: str | None = No
                 [_claude, "-p", "--no-session-persistence"],
                 input=prompt, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=120,
+                cwd=_claude_cli_cwd(),  # Fork: never the project directory
             )
             if proc.returncode != 0:
                 print(red(f"  claude -p failed: {proc.stderr.strip()[:300]}"), file=sys.stderr)

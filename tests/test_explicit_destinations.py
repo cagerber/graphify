@@ -206,3 +206,43 @@ def test_generated_html_scripts_are_pinned_with_integrity(module: str) -> None:
 
     assert tags
     assert all('integrity="sha384-' in tag for tag in tags), tags
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX claude shim")
+def test_claude_cli_never_runs_inside_the_project(monkeypatch, tmp_path: Path) -> None:
+    # `claude -p` obeys the .claude/settings.json of its working directory, which
+    # can set ANTHROPIC_BASE_URL and run hooks.
+    from datetime import datetime, timezone
+
+    from graphify import prs
+
+    ran_in = tmp_path / "cwds"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    claude = bin_dir / "claude"
+    claude.write_text(
+        f"#!/bin/sh\n[ \"$1\" = --help ] && exit 0\ncat >/dev/null\npwd -P >>'{ran_in}'\n"
+        "echo '{\"type\":\"result\",\"result\":\"{}\"}'\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    project = _project(tmp_path, "")
+    monkeypatch.chdir(project)
+    pr = prs.PRInfo(1, "t", "b", "main", "a", False, "", "SUCCESS", datetime.now(timezone.utc))
+
+    llm._call_claude_cli("source text")
+    llm._call_llm("name these", backend="claude-cli", max_tokens=10)
+    prs.triage_with_opus([pr], "main", "claude-cli")
+
+    cwds = [Path(line) for line in ran_in.read_text(encoding="utf-8").splitlines()]
+    assert len(cwds) == 3
+    assert not [d for d in cwds if d.is_relative_to(project.resolve())]
+
+
+@pytest.mark.parametrize("backend", ["deepseek", "bedrock"])
+def test_triage_refuses_a_backend_it_cannot_call(backend: str) -> None:
+    from graphify.prs import _resolve_triage_backend
+
+    with pytest.raises(ValueError, match="claude-cli"):
+        _resolve_triage_backend(backend)

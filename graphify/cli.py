@@ -3415,7 +3415,7 @@ def dispatch_command(cmd: str) -> None:
                     f"[graphify] community set changed since labeling "
                     f"({len(existing_labels)} saved labels, {len(communities)} communities now; "
                     f"renamed {changed} community(ies) by their hub). "
-                    f"Run `graphify label` to refresh names with the LLM.",
+                    f"Run `graphify label --backend NAME` to refresh names with an LLM.",
                     file=sys.stderr,
                 )
         elif no_label and not force_relabel:
@@ -3655,7 +3655,7 @@ def dispatch_command(cmd: str) -> None:
                 or os.environ.get("DEEPSEEK_API_KEY")
                 or os.environ.get("GRAPHIFY_NO_TIPS")
             ):
-                print("Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.")
+                print("Tip: `graphify extract --backend NAME` sends docs to that provider; a key alone sends nothing.")
         else:
             print(
                 "Nothing to update or rebuild failed — check output above.",

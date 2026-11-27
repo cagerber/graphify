@@ -64,7 +64,8 @@ whose `.cls` files are something else entirely.
    removes a stale `graph.html` instead of leaving it behind.
 8. **Heuristic labelling** — `graphify label --heuristic` names communities from path/symbol
    structure with no LLM call (`graphify/heuristic_labels.py`, `graphify/node_paths.py`). No
-   setting is needed. Plain `graphify label` and a first `graphify cluster-only` still use an LLM.
+   setting is needed. Plain `graphify label` and a first `graphify cluster-only` use an LLM only when a
+   backend is requested (see *Where data goes*).
 9. **Node kinds** — `kind` on AST nodes (`file` / `class` / `function` / `method` / `other`) with
    `finalize_node_kinds()` wired into bulk Python extraction (`graphify/node_kind.py`).
 10. **CLI and UX** — `graphify callers "<symbol>"` lists direct inbound call edges, and
@@ -76,7 +77,7 @@ whose `.cls` files are something else entirely.
     java/c/cpp/bash/json) and moves the rest to `langs-extra` or per-language extras that soft-fail
     when absent; `all` remains the union of every other extra.
 
-**Unconfigured runs behave as upstream.** The call-time, project-root-anchored output rules apply
+**Unconfigured runs behave as upstream**, except for *Where data goes*. The call-time, project-root-anchored output rules apply
 only when the environment names `GRAPHIFY_OUT`; without it the output dir stays inside the scanned
 directory. Folder links and pytest enrichment run only for a project with a `[tool.graphify]` section,
 and a folder link never joins two nodes that already have an edge.
@@ -130,7 +131,8 @@ Fork code inside upstream-owned files is limited to the **hook points** themselv
 - `graphify/watch.py`, `graphify/cli.py` — the incremental builds forward `ref_stub`; `cli.py` also
   takes `affected`'s config root from `.graphify_root`.
 - `graphify/llm.py`, `graphify/prs.py` — early returns ahead of upstream's backend probing, so
-  probes upstream adds stay unreachable; check after each merge for new probes elsewhere.
+  probes upstream adds stay unreachable; check after each merge for new probes elsewhere, and that
+  every `claude -p` call (`llm.py`, `prs.py`) still passes `cwd=_claude_cli_cwd()`.
   `graphify/__main__.py` — the `.env` allowlist. See *Where data goes*; the tests are
   `tests/test_explicit_destinations.py`.
 - `graphify/build.py`, `graphify/watch.py` — `build_merge`, `merge_raw_extraction` and the watch
@@ -155,7 +157,7 @@ python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream pr
 ```
 
 Surface of this delta against `v0.9.120`: **40 fork-only files** and **122 upstream-owned files**
-modified (`+1379 / -469`; most are the generated skill copies under `graphify/` and
+modified (`+1412 / -477`; most are the generated skill copies under `graphify/` and
 `tools/skillgen/expected/`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
@@ -239,6 +241,7 @@ machine unless the user asks.
 | An API key, cloud credential or `OLLAMA_*` variable selects a backend | Only `--backend`, `backend=` or an exported `GRAPHIFY_BACKEND` (`prs --triage` also takes `GRAPHIFY_TRIAGE_BACKEND`) |
 | `label`, `cluster-only` and triage fall back to `claude -p` | No fallback. Without a request, `label` keeps saved or local names |
 | `extract_corpus_parallel()` defaults to `kimi` | No default backend |
+| `claude -p` runs in the project directory, so the project's `.claude/settings.json` can redirect it and run hooks | It runs in an empty private temporary directory; your own settings still apply |
 | The skill uses Gemini when a Gemini key is set | Only when the user names it |
 | The tokenizer table is downloaded when `graphify.llm` is imported | Downloaded on first use |
 | `tree` and `callflow-html` load unpinned CDN scripts | Exact versions with integrity hashes |
@@ -256,6 +259,19 @@ query logging and everything else must come from the user's own environment. A p
 **Not covered:** `[tool.graphify]` extractors and `post_extract_merge` import and run Python named by
 the scanned project, so scanning an untrusted project can still run its code. Opening an exported
 HTML graph fetches its scripts from a CDN. Transcribing video downloads a speech model.
+
+Also not covered:
+
+- The installed skills run the interpreter named in `graphify-out/.graphify_python`, and an installed
+  git hook may too, so a project that ships that file chooses what runs.
+- The skills' `python -c` steps and `python -m graphify` can import modules from the project directory.
+- The skill's `--update` reads the folder named in `graphify-out/.graphify_root`, which may lie outside
+  the project; its documents then reach your assistant's model.
+- The skill rules are instructions to an assistant, not enforcement. The assistant session itself obeys
+  its own project settings.
+- `$VAR` and `~` are still expanded in the values a `.env` file may set, and a symlink in the project
+  can place the output directory outside it.
+- `graphify prs` asks GitHub, through `gh`, about the repository the checkout's git remote names.
 
 **Deprecated CLI aliases:** `label-communities` → `label --heuristic`, `folder-edges` →
 `enrich --folder-links`.

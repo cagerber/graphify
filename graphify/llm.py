@@ -4,13 +4,17 @@
 # this module provides a direct API path for non-Claude-Code environments.
 from __future__ import annotations
 
+import atexit  # Fork: _claude_cli_cwd
 import base64
+import functools  # Fork: _claude_cli_cwd
 import hashlib
 import json
 import os
 import re
+import shutil  # Fork: _claude_cli_cwd
 import subprocess
 import sys
+import tempfile  # Fork: _claude_cli_cwd
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -487,6 +491,18 @@ def _no_window_kwargs() -> dict:
     if sys.platform == "win32":
         return {"creationflags": subprocess.CREATE_NO_WINDOW}
     return {}
+
+
+@functools.lru_cache(maxsize=None)
+def _claude_cli_cwd() -> str:
+    """Fork: an empty private directory for `claude -p` to run in.
+
+    The CLI obeys the settings of its working directory, so a project's
+    `.claude/settings.json` could set ``ANTHROPIC_BASE_URL`` or run hooks.
+    """
+    path = tempfile.mkdtemp(prefix="graphify-claude-")
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
 
 
 def _resolve_api_timeout(default: float = 600.0) -> float:
@@ -2076,6 +2092,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
         errors="replace",  # Tolerate non-UTF-8 bytes (e.g. GBK/cp936 from claude.cmd on Chinese Windows)
         timeout=_resolve_api_timeout(),
         check=False,
+        cwd=_claude_cli_cwd(),  # Fork: never the project directory
         **_no_window_kwargs(),
     )
     cli_error = _claude_cli_error(proc.stdout)
@@ -3391,6 +3408,7 @@ def _call_llm(
             errors="replace",  # Tolerate non-UTF-8 bytes (e.g. GBK/cp936 from claude.cmd on Chinese Windows)
             timeout=_resolve_api_timeout(),
             check=False,
+            cwd=_claude_cli_cwd(),  # Fork: never the project directory
             **_no_window_kwargs(),
         )
         cli_error = _claude_cli_error(proc.stdout)
