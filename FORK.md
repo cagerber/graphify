@@ -132,7 +132,8 @@ Fork code inside upstream-owned files is limited to the **hook points** themselv
   takes `affected`'s config root from `.graphify_root`.
 - `graphify/llm.py`, `graphify/prs.py` — early returns ahead of upstream's backend probing, so
   probes upstream adds stay unreachable; check after each merge for new probes elsewhere, and that
-  every `claude -p` call (`llm.py`, `prs.py`) still passes `cwd=_claude_cli_cwd()`.
+  every `claude` launch (`llm.py`, `prs.py`, the `--help` probe included) still passes `cwd=_claude_cli_cwd()`,
+  and every `-p` call `_CLAUDE_CLI_ISOLATION`.
   `graphify/__main__.py` — the `.env` allowlist. See *Where data goes*; the tests are
   `tests/test_explicit_destinations.py`.
 - `graphify/build.py`, `graphify/watch.py` — `build_merge`, `merge_raw_extraction` and the watch
@@ -157,7 +158,7 @@ python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream pr
 ```
 
 Surface of this delta against `v0.9.120`: **40 fork-only files** and **122 upstream-owned files**
-modified (`+1412 / -477`; most are the generated skill copies under `graphify/` and
+modified (`+1445 / -478`; most are the generated skill copies under `graphify/` and
 `tools/skillgen/expected/`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
@@ -241,7 +242,7 @@ machine unless the user asks.
 | An API key, cloud credential or `OLLAMA_*` variable selects a backend | Only `--backend`, `backend=` or an exported `GRAPHIFY_BACKEND` (`prs --triage` also takes `GRAPHIFY_TRIAGE_BACKEND`) |
 | `label`, `cluster-only` and triage fall back to `claude -p` | No fallback. Without a request, `label` keeps saved or local names |
 | `extract_corpus_parallel()` defaults to `kimi` | No default backend |
-| `claude -p` runs in the project directory, so the project's `.claude/settings.json` can redirect it and run hooks | It runs in an empty private temporary directory; your own settings still apply |
+| `claude -p` runs in the project directory, so the project's `.claude/settings.json` can redirect it and run hooks | It runs in an empty private temporary directory and loads only your user settings (`--setting-sources user --strict-mcp-config`), so no skills, agents or MCP servers come from image folders or the directories above. Your own settings still apply; your MCP servers are not started, and a CLI without these flags fails |
 | The skill uses Gemini when a Gemini key is set | Only when the user names it |
 | The tokenizer table is downloaded when `graphify.llm` is imported | Downloaded on first use |
 | `tree` and `callflow-html` load unpinned CDN scripts | Exact versions with integrity hashes |

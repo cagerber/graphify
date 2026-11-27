@@ -724,12 +724,13 @@ def triage_with_opus(prs: list[PRInfo], base: str, backend_name: str | None = No
 
         elif backend == "claude-cli":
             import platform as _platform, shutil as _shutil, subprocess as _sp
-            from graphify.llm import _claude_cli_cwd  # Fork
+            from graphify.llm import _CLAUDE_CLI_ISOLATION, _claude_cli_cwd, _refuse_local_claude  # Fork
             _claude = "claude"
             if _platform.system() == "Windows":
                 _claude = _shutil.which("claude.cmd") or _shutil.which("claude") or "claude"
+                _refuse_local_claude(_shutil.which("claude.cmd") or _shutil.which("claude"))  # Fork
             proc = _sp.run(
-                [_claude, "-p", "--no-session-persistence"],
+                [_claude, "-p", "--no-session-persistence", *_CLAUDE_CLI_ISOLATION],
                 input=prompt, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=120,
                 cwd=_claude_cli_cwd(),  # Fork: never the project directory

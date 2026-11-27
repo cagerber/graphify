@@ -246,3 +246,85 @@ def test_triage_refuses_a_backend_it_cannot_call(backend: str) -> None:
 
     with pytest.raises(ValueError, match="claude-cli"):
         _resolve_triage_backend(backend)
+
+
+def _shim(path: Path, log: Path, tag: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"#!/bin/sh\nprintf '%s|%s|%s\\n' '{tag}' \"$(pwd -P)\" \"$*\" >>'{log}'\n"
+        "[ \"$1\" = --help ] && exit 0\ncat >/dev/null\n"
+        "echo '{\"type\":\"result\",\"result\":\"{}\"}'\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX claude shim")
+def test_every_claude_launch_is_isolated_from_project_files(monkeypatch, tmp_path: Path) -> None:
+    # The working directory is not enough: --add-dir loads a project's skills and
+    # agents, and the CLI reads .mcp.json from the parents of its directory (a
+    # shared /tmp), unless only the user's own settings sources are loaded.
+    from datetime import datetime, timezone
+
+    from graphify import prs
+
+    log = tmp_path / "log"
+    project = _project(tmp_path, "")
+    _shim(tmp_path / "bin" / "claude", log, "real")
+    _shim(project / "claude", log, "planted")
+    # A relative PATH entry must not resolve into the project, probe included.
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join([".", str(tmp_path / "bin"), os.environ["PATH"]])
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(llm, "_JSON_SCHEMA_SUPPORT", {})
+    pr = prs.PRInfo(1, "t", "b", "main", "a", False, "", "SUCCESS", datetime.now(timezone.utc))
+    image = llm._ImageRef(project / "pic.png", "pic.png", "image/png", None)
+
+    llm._call_claude_cli("source text", images=[image])
+    llm._call_llm("name these", backend="claude-cli", max_tokens=10)
+    prs.triage_with_opus([pr], "main", "claude-cli")
+
+    calls = [line.split("|", 2) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [tag for tag, _, _ in calls] == ["real"] * 4
+    assert not [d for _, d, _ in calls if Path(d).is_relative_to(project.resolve())]
+    requests = [argv for _, _, argv in calls if argv != "--help"]
+    assert len(requests) == 3
+    for argv in requests:
+        assert "--setting-sources user --strict-mcp-config" in argv
+
+
+def test_windows_refuses_a_claude_found_in_the_current_directory(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    # Windows searches the current directory first, so a project can ship claude.cmd.
+    import platform
+    import shutil
+    import subprocess
+    from datetime import datetime, timezone
+
+    from graphify import prs
+
+    monkeypatch.chdir(tmp_path)
+    launched: list = []
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: os.path.join(".", "claude.cmd"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: launched.append(a))
+    pr = prs.PRInfo(1, "t", "b", "main", "a", False, "", "SUCCESS", datetime.now(timezone.utc))
+
+    with pytest.raises(RuntimeError, match="current directory"):
+        llm._call_claude_cli("source text")
+    with pytest.raises(RuntimeError, match="current directory"):
+        llm._call_llm("name these", backend="claude-cli", max_tokens=10)
+    prs.triage_with_opus([pr], "main", "claude-cli")
+
+    assert "current directory" in capsys.readouterr().err
+    assert not launched
+
+
+def test_claude_cli_directory_is_recreated_when_removed() -> None:
+    # A /tmp cleaner may remove it under a long-running process.
+    first = llm._claude_cli_cwd()
+    os.rmdir(first)
+    second = llm._claude_cli_cwd()
+    assert os.path.isdir(second) and not os.listdir(second)

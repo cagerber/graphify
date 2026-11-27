@@ -9,6 +9,7 @@ import base64
 import functools  # Fork: _claude_cli_cwd
 import hashlib
 import json
+import ntpath  # Fork: _refuse_local_claude
 import os
 import re
 import shutil  # Fork: _claude_cli_cwd
@@ -493,16 +494,41 @@ def _no_window_kwargs() -> dict:
     return {}
 
 
+# Fork: load only the user's own settings. Without this the CLI also takes skills
+# and agents from --add-dir (the project's image folders), and .mcp.json and
+# CLAUDE.md from the parents of its working directory, such as a shared /tmp.
+# A CLI too old to know these flags fails rather than running without them.
+_CLAUDE_CLI_ISOLATION = ("--setting-sources", "user", "--strict-mcp-config")
+
+
 @functools.lru_cache(maxsize=None)
+def _new_claude_cli_dir() -> str:
+    path = tempfile.mkdtemp(prefix="graphify-claude-")
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
 def _claude_cli_cwd() -> str:
     """Fork: an empty private directory for `claude -p` to run in.
 
     The CLI obeys the settings of its working directory, so a project's
     `.claude/settings.json` could set ``ANTHROPIC_BASE_URL`` or run hooks.
     """
-    path = tempfile.mkdtemp(prefix="graphify-claude-")
-    atexit.register(shutil.rmtree, path, ignore_errors=True)
-    return path
+    if not os.path.isdir(_new_claude_cli_dir()):  # removed by a temp cleaner
+        _new_claude_cli_dir.cache_clear()
+    return _new_claude_cli_dir()
+
+
+def _refuse_local_claude(found: str | None) -> None:
+    """Fork: Windows looks in the current directory first, so a project could ship
+    its own `claude.cmd` or `claude.exe`."""
+    here = os.path.normcase(os.path.realpath(os.getcwd()))
+    # ntpath splits both separators, whichever platform this runs on.
+    if found and os.path.normcase(os.path.realpath(ntpath.dirname(found) or ".")) == here:
+        raise RuntimeError(
+            f"refusing to run {found!r} from the current directory; "
+            "run graphify from elsewhere or remove that file"
+        )
 
 
 def _resolve_api_timeout(default: float = 600.0) -> float:
@@ -1969,6 +1995,7 @@ def _claude_cli_supports_json_schema(claude_cmd: str) -> bool:
     try:
         proc = subprocess.run(
             [claude_cmd, "--help"],
+            cwd=_claude_cli_cwd(),  # Fork: never the project directory
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -2008,6 +2035,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
     claude_cmd = "claude"
     if platform.system() == "Windows":
         cmd_path = shutil.which("claude.cmd")
+        _refuse_local_claude(cmd_path or shutil.which("claude"))  # Fork
         if cmd_path:
             claude_cmd = cmd_path
         elif shutil.which("claude") is None:
@@ -2063,6 +2091,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
         claude_cmd, "-p",
         "--output-format", "json",
         "--no-session-persistence",
+        *_CLAUDE_CLI_ISOLATION,  # Fork
         *add_dir_args,
     ]
     # claude-cli defaults to Opus, which is overkill for the structured-JSON
@@ -3386,6 +3415,7 @@ def _call_llm(
         claude_cmd = "claude"
         if platform.system() == "Windows":
             cmd_path = shutil.which("claude.cmd")
+            _refuse_local_claude(cmd_path or shutil.which("claude"))  # Fork
             if cmd_path:
                 claude_cmd = cmd_path
             elif shutil.which("claude") is None:
@@ -3393,6 +3423,7 @@ def _call_llm(
         elif shutil.which("claude") is None:
             raise RuntimeError("Claude Code CLI not found on $PATH")
         cli_args = [claude_cmd, "-p", "--output-format", "json", "--no-session-persistence"]
+        cli_args.extend(_CLAUDE_CLI_ISOLATION)  # Fork
         cli_model = (
             mdl if model is not None
             else os.environ.get("GRAPHIFY_CLAUDE_CLI_MODEL", "").strip()
