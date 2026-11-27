@@ -191,7 +191,7 @@ def test_aborted_flagless_extract_keeps_scope(tmp_path):
     env = {k: "" for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY",
                            "OPENAI_API_KEY", "MOONSHOT_API_KEY", "DEEPSEEK_API_KEY")}
     r = _gfy(tmp_path, "extract", str(tmp_path), env=env)
-    assert r.returncode == 1 and "no LLM API key" in r.stderr
+    assert r.returncode == 1 and "no LLM backend requested" in r.stderr
     assert _cfg(tmp_path)["code_only"] is True
 
 

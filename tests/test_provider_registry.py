@@ -138,6 +138,7 @@ def test_provider_base_url_ok_scheme_and_warnings(capsys):
     assert "plaintext" in capsys.readouterr().err
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_custom_provider_after_builtins(monkeypatch):
     """Custom providers appear after all built-ins in detect_backend() priority."""
     from graphify import llm

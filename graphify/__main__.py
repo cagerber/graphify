@@ -30,8 +30,40 @@ def _unwrap_env(value: str) -> str:
     return os.path.expanduser(os.path.expandvars(value))
 
 
+# A project's env files travel with the project, so they may only tune local work.
+# Anything that picks where data goes (keys, endpoints, backends, proxies), which
+# code gets loaded, or what gets written outside the project comes from the user's
+# own environment. An allowlist, so a new setting is refused until judged safe.
+_PROJECT_ENV_KEYS = frozenset({
+    "GRAPHIFY_AST_PROGRESS_INTERVAL",
+    "GRAPHIFY_CODE_EXTENSIONS",
+    "GRAPHIFY_FOLDER_AFFINITY",
+    "GRAPHIFY_FOLDER_EDGES",
+    "GRAPHIFY_HEURISTIC_LABELS",
+    "GRAPHIFY_MAX_GRAPH_BYTES",
+    "GRAPHIFY_MAX_WORKERS",
+    "GRAPHIFY_PYTEST_ENRICH",
+    "GRAPHIFY_REBUILD_MEMORY_LIMIT_MB",
+    "GRAPHIFY_REBUILD_TIMEOUT",
+    "GRAPHIFY_VIZ_NODE_LIMIT",
+})
+
+
+def _project_env_allows(key: str, value: str) -> bool:
+    if key in _PROJECT_ENV_KEYS:
+        return True
+    if key == "GRAPHIFY_BACKEND":  # turning LLM work off is always safe
+        return value.strip().lower() in ("none", "off", "disable", "disabled")
+    if key == "GRAPHIFY_OUT":  # a directory inside the project only
+        path = Path(value)
+        return bool(value) and not path.anchor and ".." not in path.parts
+    return False
+
+
 def _load_visible_env() -> None:
-    """Fill unset keys from .env, .env.local, and .env.shared up to the git root.
+    """Fill unset local settings from .env, .env.local, and .env.shared up to the git root.
+
+    Fork: only the settings `_project_env_allows` accepts are read.
 
     Already-exported values win. ``.env.example`` is not read. This runs before
     ``GRAPHIFY_OUT`` is imported, because that name is bound once at import and
@@ -70,7 +102,11 @@ def _load_visible_env() -> None:
                 key = key.strip()
                 if not key or key in os.environ:
                     continue
-                os.environ[key] = _unwrap_env(value.strip())
+                raw_value = value.strip()
+                value = _unwrap_env(raw_value)
+                # An expanded `~` or `$VAR` is judged by its result.
+                if _project_env_allows(key, value):
+                    os.environ[key] = value
 
 
 _load_visible_env()
@@ -984,7 +1020,7 @@ def _run_cli() -> None:
         print("    --model=<name>          model to use for community naming (claude-cli also reads GRAPHIFY_CLAUDE_CLI_MODEL)")
         print("    --max-concurrency=N     parallel community-labeling LLM calls (default 4; forced to 1 for ollama/claude-cli)")
         print("    --batch-size=N          communities per labeling LLM call (default 100, sized for ~16k context; use 40 for 8k)")
-        print("  label <path>            (re)name communities with the configured LLM backend, regenerate report")
+        print("  label <path>            (re)name communities, regenerate report (LLM only with --backend NAME)")
         print("    --missing-only         keep existing labels and only name missing/placeholder communities")
         print("    --heuristic            Fork: name from paths and symbols, no LLM (--force, --if-generic, --no-viz)")
         print("    --backend=<name>        backend to use (default: auto-detect from API keys)")

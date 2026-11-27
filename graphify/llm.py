@@ -61,7 +61,16 @@ def _get_tokenizer():
 
 
 # Cached at import time. None if tiktoken is unavailable; consumers must handle.
-_TOKENIZER = _get_tokenizer()
+# Fork: loaded on first use instead, because tiktoken downloads its table.
+_UNLOADED = object()
+_TOKENIZER = _UNLOADED
+
+
+def _tokenizer():
+    global _TOKENIZER
+    if _TOKENIZER is _UNLOADED:
+        _TOKENIZER = _get_tokenizer()
+    return _TOKENIZER
 
 # Anything past Latin Extended (CJK, Devanagari, Cyrillic, Arabic, ...).
 _NON_LATIN_RE = re.compile(r"[^\u0000-ɏ]")
@@ -2243,12 +2252,7 @@ def extract_files_direct(
             )
         backend = detect_backend()
         if backend is None:
-            raise ValueError(
-                "No LLM backend configured. Set one of: GEMINI_API_KEY, ANTHROPIC_API_KEY, "
-                "OPENAI_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, "
-                "AZURE_OPENAI_API_KEY+AZURE_OPENAI_ENDPOINT, OLLAMA_BASE_URL, "
-                "or AWS credentials. Pass backend= explicitly to select a provider."
-            )
+            raise ValueError(f"No LLM backend requested: {NO_BACKEND_HINT}.")
     if backend not in BACKENDS:
         raise ValueError(f"Unknown backend {backend!r}. Available: {sorted(BACKENDS)}")
 
@@ -2387,13 +2391,13 @@ def _estimate_file_tokens(unit: "Path | FileSlice") -> int:
     if isinstance(unit, FileSlice):
         # A slice's size is its char range (already ≤ _FILE_CHAR_CAP). Use the
         # tokenizer on its text when available, else the chars/4 heuristic.
-        if _TOKENIZER is None:
+        if _tokenizer() is None:
             return (min(unit.end - unit.start, _FILE_CHAR_CAP) + _PER_FILE_OVERHEAD_CHARS) // _CHARS_PER_TOKEN
         try:
             content = read_slice_text(unit)[:_FILE_CHAR_CAP]
         except OSError:
             return 0
-        return len(_TOKENIZER.encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
+        return len(_tokenizer().encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
 
     path = unit
     # Raster images are not read as text; a vision model bills them at a roughly
@@ -2415,7 +2419,7 @@ def _estimate_file_tokens(unit: "Path | FileSlice") -> int:
             content = _pdf_text_for_estimate(path)[:_FILE_CHAR_CAP]
         except Exception:
             return 0
-    elif _TOKENIZER is None:
+    elif _tokenizer() is None:
         try:
             size = path.stat().st_size
         except OSError:
@@ -2428,9 +2432,9 @@ def _estimate_file_tokens(unit: "Path | FileSlice") -> int:
         except OSError:
             return 0
 
-    if _TOKENIZER is None:
+    if _tokenizer() is None:
         return (len(content) + _PER_FILE_OVERHEAD_CHARS) // _CHARS_PER_TOKEN
-    return len(_TOKENIZER.encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
+    return len(_tokenizer().encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
 
 
 def _pack_chunks_by_tokens(
@@ -2853,7 +2857,7 @@ def _extract_with_adaptive_retry(
 
 def extract_corpus_parallel(
     files: "list[Path | FileSlice]",
-    backend: str = "kimi",
+    backend: str | None = None,  # Fork: upstream defaults to "kimi"
     api_key: str | None = None,
     model: str | None = None,
     root: Path = Path("."),
@@ -2916,6 +2920,11 @@ def extract_corpus_parallel(
     Accepts ``str`` paths as well as ``Path``; string entries are coerced up
     front so packing/slicing helpers can rely on ``Path`` semantics (#1386).
     """
+    # Fork: no default provider.
+    if backend is None:
+        backend = detect_backend()
+        if backend is None:
+            raise ValueError(f"No LLM backend requested: {NO_BACKEND_HINT}.")
     if max_retry_depth is None:
         max_retry_depth = _resolve_max_retry_depth()
     files = [f if isinstance(f, (Path, FileSlice)) else Path(f) for f in files]
@@ -3674,6 +3683,10 @@ def detect_backend_with_source() -> "tuple[str | None, str]":
         if setting.lower() in _BACKEND_DISABLE_SENTINELS:
             return None, f"GRAPHIFY_BACKEND={setting}"
         return setting, f"GRAPHIFY_BACKEND={setting}"
+    # Fork: nothing but a request selects a backend. Keys, cloud credentials,
+    # endpoint variables and installed CLIs never do. Upstream's probing is left
+    # below, unreachable, so probes it adds later stay unreachable too (FORK.md).
+    return None, "no backend requested"
     for backend in ("gemini", "kimi", "claude", "openai", "deepseek"):
         if _get_backend_api_key(backend):
             env = _first_set_env(_backend_env_keys(backend)) or backend
@@ -3706,6 +3719,13 @@ def detect_backend() -> str | None:
     explicit ``GRAPHIFY_BACKEND`` override/disable (#4361).
     """
     return detect_backend_with_source()[0]
+
+
+_FORK_CLI_FALLBACK = False  # Fork: see generate_community_labels
+NO_BACKEND_HINT = (
+    "pass --backend NAME (or export GRAPHIFY_BACKEND=NAME in your shell); "
+    "API keys alone do not select a backend"
+)
 
 
 def _claude_cli_available() -> bool:
@@ -4062,7 +4082,8 @@ def generate_community_labels(
             backend = detect_backend()
         except Exception:
             backend = None
-    if not backend and _claude_cli_available():
+    # Fork: an installed CLI is not a request, so the fallback below is off.
+    if not backend and _FORK_CLI_FALLBACK and _claude_cli_available():
         # `detect_backend` is key-based, and claude-cli is the one backend with no
         # key to find, so it can never be detected there — and widening detection
         # itself would change extraction's contract, which deliberately refuses to
@@ -4082,8 +4103,8 @@ def generate_community_labels(
     if not backend:
         if not quiet:
             print(
-                "[graphify label] no LLM backend configured; keeping Community N "
-                "placeholders. Set an API key (e.g. GOOGLE_API_KEY) or pass --backend.",
+                "[graphify label] no LLM backend requested; keeping local names. "
+                f"For LLM names, {NO_BACKEND_HINT}.",
                 file=sys.stderr,
             )
         return _placeholder_community_labels(communities), "placeholder"

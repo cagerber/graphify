@@ -56,6 +56,7 @@ def test_resolve_ollama_base_url_returns_default_without_env(monkeypatch):
     assert llm._resolve_ollama_base_url("default-url") == "default-url"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_gemini_accepts_gemini_api_key(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
@@ -64,6 +65,7 @@ def test_gemini_accepts_gemini_api_key(monkeypatch):
     assert llm._get_backend_api_key("gemini") == "gemini-key"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_gemini_accepts_google_api_key(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
@@ -72,6 +74,7 @@ def test_gemini_accepts_google_api_key(monkeypatch):
     assert llm._get_backend_api_key("gemini") == "google-key"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_backend_detection_prefers_gemini(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
@@ -82,6 +85,7 @@ def test_backend_detection_prefers_gemini(monkeypatch):
     assert llm.detect_backend() == "gemini"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_openai_backend_detected(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
@@ -1490,6 +1494,7 @@ def test_call_azure_uses_correct_client_params_and_max_completion_tokens(monkeyp
     assert result["nodes"] == [{"id": "a"}]
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_returns_azure_when_both_vars_set(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
@@ -2047,6 +2052,7 @@ def _clear_every_backend_signal(monkeypatch):
         monkeypatch.delenv(env_key, raising=False)
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_labelling_falls_back_to_the_claude_cli_instead_of_placeholders(monkeypatch):
     """The one backend with no API key must not cost you your community names.
 
@@ -2100,6 +2106,7 @@ def test_detection_is_not_widened_by_the_labelling_fallback(monkeypatch):
     assert llm.detect_backend() is None
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_claude_cli_never_shadows_a_configured_api_key(monkeypatch):
     """An incidental CLI on PATH must not outrank a key the user configured."""
     _clear_every_backend_signal(monkeypatch)

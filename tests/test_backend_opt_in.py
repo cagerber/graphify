@@ -22,6 +22,7 @@ from graphify import llm
 DISABLE_SENTINELS = ["none", "off", "disable", "disabled"]
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_with_source_names_the_ambient_variable(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "ambient")
     backend, source = llm.detect_backend_with_source()

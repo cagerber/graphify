@@ -3212,6 +3212,16 @@ def dispatch_command(cmd: str) -> None:
                 i_arg += 1
         if watch_path is None:
             watch_path = Path(".")
+        # Fork: with no backend requested, `label` must not replace saved names.
+        if force_relabel and not label_backend:
+            from graphify.llm import NO_BACKEND_HINT, detect_backend
+            if not detect_backend():
+                force_relabel = False
+                print(
+                    "[graphify label] no LLM backend requested; keeping saved or "
+                    f"local names. For LLM names, {NO_BACKEND_HINT}.",
+                    file=sys.stderr,
+                )
         out = graphify_out_for_watch(watch_path)
         graph_json = graph_override if graph_override is not None else out / "graph.json"
         if not graph_json.exists():
@@ -3323,7 +3333,7 @@ def dispatch_command(cmd: str) -> None:
                 print(
                     f"[graphify] warning: {'/'.join(_ignored_label_flags)} ignored: "
                     f"reusing saved labels at {labels_path}. "
-                    f"Run `graphify label` to relabel, or delete the labels file.",
+                    f"Run `graphify label --backend NAME` to relabel, or delete the labels file.",
                     file=sys.stderr,
                 )
             # Reuse saved labels, but don't blindly trust them: the graph may have
@@ -5044,12 +5054,10 @@ def dispatch_command(cmd: str) -> None:
                 if semantic_files:
                     hint = (" Or pass --code-only to index just the code "
                             "(local AST, no key) and skip the non-code files.")
+                from graphify.llm import NO_BACKEND_HINT
                 print(
-                    "error: no LLM API key found (" + "; ".join(reasons) + "). "
-                    "Set GEMINI_API_KEY or GOOGLE_API_KEY (gemini), MOONSHOT_API_KEY "
-                    "(kimi), ANTHROPIC_API_KEY (claude), OPENAI_API_KEY (openai), "
-                    "DEEPSEEK_API_KEY (deepseek), or pass --backend. A code-only "
-                    "corpus needs no key." + hint,
+                    "error: no LLM backend requested (" + "; ".join(reasons) + "): "
+                    + NO_BACKEND_HINT + ". A code-only corpus needs no key." + hint,
                     file=sys.stderr,
                 )
                 sys.exit(1)

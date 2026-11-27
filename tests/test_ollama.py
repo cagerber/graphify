@@ -55,6 +55,7 @@ def test_ollama_in_backends():
     assert "max_tokens" in BACKENDS["ollama"]
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_ollama(monkeypatch):
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -62,6 +63,7 @@ def test_detect_backend_ollama(monkeypatch):
     assert detect_backend() == "ollama"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_kimi_beats_ollama(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -69,6 +71,7 @@ def test_detect_backend_kimi_beats_ollama(monkeypatch):
     assert detect_backend() == "kimi"
 
 
+@pytest.mark.skip(reason="Fork: only a request selects a backend (FORK.md)")
 def test_detect_backend_claude_beats_ollama(monkeypatch):
     # ANTHROPIC_API_KEY (paid, intentional) should win over OLLAMA_BASE_URL
     # (env-driven, easy to set accidentally) -- security fix F-002/F-029.

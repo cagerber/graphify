@@ -969,7 +969,7 @@ def test_extract_without_key_still_errors_when_docs_present(
         mainmod.main()
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
-    assert "no LLM API key found" in err
+    assert "no LLM backend requested" in err
     assert "code-only corpus needs no key" in err
     assert not (out_dir / "graphify-out" / "graph.json").exists()
 
@@ -1751,6 +1751,7 @@ def test_incremental_stray_attribution_preserves_undispatched_file(
     project = _stray_corpus(tmp_path)
     out_dir = tmp_path / "out"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+    monkeypatch.setenv("GRAPHIFY_BACKEND", "claude")
 
     def _seed_extraction(paths, **kwargs):
         on_chunk = kwargs.get("on_chunk_done")

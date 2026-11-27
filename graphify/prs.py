@@ -8,6 +8,7 @@ Usage:
   graphify prs                   # dashboard of all open PRs
   graphify prs <number>          # deep dive on one PR
   graphify prs --triage          # Opus ranks your review queue
+  graphify prs --triage --backend claude   # Fork: the backend must be named
   graphify prs --worktrees       # show worktree → branch → PR mapping
   graphify prs --conflicts       # PRs sharing graph communities (merge-order risk)
   graphify prs --base <branch>   # filter to PRs targeting this base (default: v8)
@@ -614,9 +615,20 @@ _TRIAGE_MODEL_DEFAULTS: dict[str, str] = {
 }
 
 
-def _resolve_triage_backend() -> tuple[str, str]:
+def _resolve_triage_backend(requested: str | None = None) -> tuple[str, str]:
     """Return (backend, model) using GRAPHIFY_TRIAGE_BACKEND or first available key."""
     from graphify.llm import BACKENDS, _get_backend_api_key, _default_model_for_backend
+    from graphify.llm import NO_BACKEND_HINT, detect_backend
+
+    # Fork: --backend, GRAPHIFY_TRIAGE_BACKEND or GRAPHIFY_BACKEND only. A key or
+    # an installed CLI never selects one, so upstream's probing below is unreachable.
+    wanted = requested or os.environ.get("GRAPHIFY_TRIAGE_BACKEND", "").strip() or detect_backend()
+    if wanted not in BACKENDS:
+        problem = f"unknown backend {wanted!r}" if wanted else "no LLM backend requested"
+        raise ValueError(f"{problem}: {NO_BACKEND_HINT}")
+    return wanted, (os.environ.get("GRAPHIFY_TRIAGE_MODEL")
+                    or _TRIAGE_MODEL_DEFAULTS.get(wanted)
+                    or _default_model_for_backend(wanted))
 
     explicit = os.environ.get("GRAPHIFY_TRIAGE_BACKEND", "").strip()
     if explicit in BACKENDS:
@@ -639,7 +651,7 @@ def _resolve_triage_backend() -> tuple[str, str]:
     return "ollama", _default_model_for_backend("ollama")
 
 
-def triage_with_opus(prs: list[PRInfo], base: str) -> None:
+def triage_with_opus(prs: list[PRInfo], base: str, backend_name: str | None = None) -> None:
     try:
         from graphify.llm import BACKENDS, _get_backend_api_key
     except ImportError:
@@ -668,7 +680,7 @@ def triage_with_opus(prs: list[PRInfo], base: str) -> None:
     )
 
     try:
-        backend, model = _resolve_triage_backend()
+        backend, model = _resolve_triage_backend(backend_name)
     except Exception as e:
         print(red(f"  Could not resolve triage backend: {e}"), file=sys.stderr)
         sys.exit(1)
@@ -737,6 +749,7 @@ def cmd_prs(argv: list[str]) -> None:
     base: str | None = None  # auto-detected from repo if not given
     repo: str | None = None
     do_triage = False
+    triage_backend: str | None = None
     do_worktrees = False
     do_conflicts = False
     show_wrong_base = False
@@ -748,6 +761,10 @@ def cmd_prs(argv: list[str]) -> None:
         arg = argv[i]
         if arg == "--triage":
             do_triage = True
+        elif arg == "--backend" and i + 1 < len(argv):
+            triage_backend = argv[i + 1]; i += 1
+        elif arg.startswith("--backend="):
+            triage_backend = arg.split("=", 1)[1]
         elif arg == "--worktrees":
             do_worktrees = True
         elif arg == "--conflicts":
@@ -807,7 +824,7 @@ def cmd_prs(argv: list[str]) -> None:
 
     if do_triage:
         render_dashboard(prs, base, show_wrong_base)
-        triage_with_opus(prs, base)
+        triage_with_opus(prs, base, triage_backend)
         return
 
     if do_worktrees:

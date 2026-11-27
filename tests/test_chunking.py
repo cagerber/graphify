@@ -1060,7 +1060,7 @@ def test_estimate_file_tokens_handles_tiktoken_special_token(tmp_path):
     strings appearing as ordinary text; we pass disallowed_special=() since this
     is only an estimate (#1685)."""
     import graphify.llm as llm
-    if llm._TOKENIZER is None:
+    if llm._tokenizer() is None:
         import pytest
         pytest.skip("tiktoken not installed; estimation uses the char heuristic")
     f = tmp_path / "tokenizer-notes.md"

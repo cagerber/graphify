@@ -34,6 +34,8 @@ graphify extract ./core/     # → ./core/graphify-out/graph.json
 graphify extract ./service/  # → ./service/graphify-out/graph.json
 graphify extract ./platform/ # → ./platform/graphify-out/graph.json
 # Add --backend gemini|kimi|openai|deepseek|claude-cli depending on which API key you have set
+# Fork: a key selects nothing. Docs, papers and images are sent only with --backend;
+# add it only if the user asked for that provider (or use --code-only)
 
 # Then merge at the project root:
 graphify merge-graphs \

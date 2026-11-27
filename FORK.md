@@ -129,6 +129,10 @@ Fork code inside upstream-owned files is limited to the **hook points** themselv
 - `graphify/serve.py` — one `node_ref` tier in `_find_node_tiers`.
 - `graphify/watch.py`, `graphify/cli.py` — the incremental builds forward `ref_stub`; `cli.py` also
   takes `affected`'s config root from `.graphify_root`.
+- `graphify/llm.py`, `graphify/prs.py` — early returns ahead of upstream's backend probing, so
+  probes upstream adds stay unreachable; check after each merge for new probes elsewhere.
+  `graphify/__main__.py` — the `.env` allowlist. See *Where data goes*; the tests are
+  `tests/test_explicit_destinations.py`.
 - `graphify/build.py`, `graphify/watch.py` — `build_merge`, `merge_raw_extraction` and the watch
   reconcile call `carry_referenced_stubs`; `build_merge` also calls `drop_superseded_stubs`.
 
@@ -150,8 +154,9 @@ python scripts/upstream_footprint.py          # per-file surface
 python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
 ```
 
-Surface of this delta against `v0.9.120`: **39 fork-only files** and **24 upstream-owned files**
-modified (`+1072 / -231`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
+Surface of this delta against `v0.9.120`: **40 fork-only files** and **122 upstream-owned files**
+modified (`+1379 / -469`; most are the generated skill copies under `graphify/` and
+`tools/skillgen/expected/`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
 `scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`
@@ -221,8 +226,36 @@ collapse_tests_dir = true
 | `GRAPHIFY_HEURISTIC_LABELS` | from `[tool.graphify]` or `0` | Heuristic relabel after `update` |
 
 The CLI also fills **unset** variables from `.env`, `.env.local` and `.env.shared`, from the working
-directory up to the git root (`_load_visible_env()` in `graphify/__main__.py`). Every key in those
-files is loaded, not only `GRAPHIFY_*`; exported values win.
+directory up to the git root (`_load_visible_env()` in `graphify/__main__.py`). Only local settings
+are read from those files (see below); exported values win.
+
+## Where data goes (differs from upstream)
+
+A project must not decide where its reader's source or credentials are sent, and nothing leaves the
+machine unless the user asks.
+
+| Upstream | This fork |
+|---|---|
+| An API key, cloud credential or `OLLAMA_*` variable selects a backend | Only `--backend`, `backend=` or an exported `GRAPHIFY_BACKEND` (`prs --triage` also takes `GRAPHIFY_TRIAGE_BACKEND`) |
+| `label`, `cluster-only` and triage fall back to `claude -p` | No fallback. Without a request, `label` keeps saved or local names |
+| `extract_corpus_parallel()` defaults to `kimi` | No default backend |
+| The skill uses Gemini when a Gemini key is set | Only when the user names it |
+| The tokenizer table is downloaded when `graphify.llm` is imported | Downloaded on first use |
+| `tree` and `callflow-html` load unpinned CDN scripts | Exact versions with integrity hashes |
+
+From a project's `.env` files only these are read: `GRAPHIFY_AST_PROGRESS_INTERVAL`,
+`GRAPHIFY_CODE_EXTENSIONS`, `GRAPHIFY_FOLDER_AFFINITY`, `GRAPHIFY_FOLDER_EDGES`,
+`GRAPHIFY_HEURISTIC_LABELS`, `GRAPHIFY_MAX_GRAPH_BYTES`, `GRAPHIFY_MAX_WORKERS`,
+`GRAPHIFY_PYTEST_ENRICH`, `GRAPHIFY_REBUILD_MEMORY_LIMIT_MB`, `GRAPHIFY_REBUILD_TIMEOUT`,
+`GRAPHIFY_VIZ_NODE_LIMIT`, a relative `GRAPHIFY_OUT` without `..`, and `GRAPHIFY_BACKEND` only to
+turn LLM work off. Keys, base URLs, proxies, `GRAPHIFY_ALLOW_LOCAL_PROVIDERS`, `GRAPHIFY_CONFIG`,
+query logging and everything else must come from the user's own environment. A project's
+`.graphify/providers.json` therefore loads only when the user exports
+`GRAPHIFY_ALLOW_LOCAL_PROVIDERS` themselves.
+
+**Not covered:** `[tool.graphify]` extractors and `post_extract_merge` import and run Python named by
+the scanned project, so scanning an untrusted project can still run its code. Opening an exported
+HTML graph fetches its scripts from a CDN. Transcribing video downloads a speech model.
 
 **Deprecated CLI aliases:** `label-communities` → `label --heuristic`, `folder-edges` →
 `enrich --folder-links`.
