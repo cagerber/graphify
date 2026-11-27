@@ -190,6 +190,10 @@ collapse_tests_dir = true
 | `GRAPHIFY_PYTEST_ENRICH` | `1` | Pytest markers + `tests_covers` on `update` |
 | `GRAPHIFY_HEURISTIC_LABELS` | from `[tool.graphify]` or `0` | Heuristic relabel after `update` |
 
+The CLI also fills **unset** variables from `.env`, `.env.local` and `.env.shared`, from the working
+directory up to the git root (`_load_visible_env()` in `graphify/__main__.py`). Every key in those
+files is loaded, not only `GRAPHIFY_*`; exported values win.
+
 **Deprecated CLI aliases:** `label-communities` → `label --heuristic`, `folder-edges` →
 `enrich --folder-links`.
 
