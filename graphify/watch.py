@@ -1493,6 +1493,16 @@ def _reconcile_existing_graph(
             )
 
         existing_edges = existing.get("links", existing.get("edges", []))
+        # Fork: keep, as stubs, dropped symbols that untouched files still use.
+        from graphify.ext.extract.ref_stubs import carry_referenced_stubs
+        carried_stubs = carry_referenced_stubs(
+            [n for n in existing.get("nodes", []) if n["id"] not in all_ids],
+            [e for e in existing_edges if not _edge_evicted(e)],
+            new_ast_ids,
+            project_root,
+        )
+        preserved_nodes += carried_stubs
+        all_ids |= {node["id"] for node in carried_stubs}
         preserved_edges = [
             edge
             for edge in existing_edges
@@ -2879,15 +2889,8 @@ def _rebuild_code(
                     normalize_source=_nsf,
                 )
                 from graphify.extractors.resolution import _cpp_reconciliation_paths
-                from graphify.ext.extract.ref_stubs import ref_stub_referrer_paths  # Fork
                 extract_targets = _cpp_reconciliation_paths(
                     extract_targets, ctx_graph.get("nodes", []), project_root,
-                    available_paths=code_files,
-                    changed_paths=[Path(p) for p in deleted_source_identities],
-                )
-                # Fork: re-read the files that point at a symbol this batch drops.
-                extract_targets = ref_stub_referrer_paths(
-                    extract_targets, ctx_graph, project_root,
                     available_paths=code_files,
                     changed_paths=[Path(p) for p in deleted_source_identities],
                 )

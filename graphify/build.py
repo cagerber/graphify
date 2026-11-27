@@ -34,7 +34,7 @@ from .ids import make_id, normalize_id as _normalize_id
 from .paths import default_graph_json as _default_graph_json
 from .paths import is_absolute_any_platform as _is_abs
 from .validate import VALID_CONFIDENCES, validate_extraction
-from .ext.extract.ref_stubs import drop_superseded_stubs  # Fork
+from .ext.extract.ref_stubs import carry_referenced_stubs, drop_superseded_stubs  # Fork
 
 
 # Deterministic (AST) extractors emit source_location "L<line>"; the semantic
@@ -2888,6 +2888,14 @@ def merge_raw_extraction(
             return False  # unowned — carry forward
         return _prune_hit(sf)
 
+    # Fork: keep, as stubs, dropped symbols that untouched files still use.
+    carried_stubs = carry_referenced_stubs(
+        [n for n in existing_nodes if _dropped(n)],
+        [e for e in existing_edges if not _dropped(e)],
+        {n.get("id") for n in new.get("nodes", [])},
+        _eff_root or ".",
+    )
+
     # #3203: Check for unverified semantic shrink on re-extracted sources.
     unverified_semantic_shrink: dict[str, tuple[int, int]] = {}
     if new_sem_sources:
@@ -2913,6 +2921,7 @@ def merge_raw_extraction(
                 unverified_semantic_shrink[canon_sf] = (prior_count, fresh_count)
 
     new["nodes"] = [n for n in existing_nodes if not _dropped(n)] + list(new.get("nodes", []))
+    new["nodes"] += carried_stubs  # Fork
     new["edges"] = [e for e in existing_edges if not _dropped(e)] + list(new.get("edges", []))
     carried_hyper = [he for he in existing_hyperedges if not _dropped(he)]
     if carried_hyper or new.get("hyperedges"):
@@ -3018,6 +3027,7 @@ def build_merge(
     # existing_nodes, so any later size comparison against the rebound list can
     # never see the loss it is meant to catch.
     _disk_nodes = existing_nodes
+    _disk_edges = existing_edges  # Fork
     _disk_n = len(existing_nodes)
     # Source-less nodes already isolated in the stored graph (#4399). Taken
     # before the rebind below drops the re-extracted sources' old edges, so a
@@ -3195,6 +3205,19 @@ def build_merge(
 
     # Fork: a fresh definition replaces the saved reference stub of its id.
     existing_nodes = drop_superseded_stubs(existing_nodes, new_chunks)
+
+    # Fork: keep, as stubs, dropped symbols that untouched files still use.
+    def _gone(item: dict) -> bool:
+        return bool(new_sources and not _kept(item)) or _prune_match(item.get("source_file"))
+
+    carried_stubs = carry_referenced_stubs(
+        [n for n in _disk_nodes if _gone(n)],
+        [e for e in _disk_edges if not _gone(e)],
+        {n.get("id") for chunk in new_chunks for n in chunk.get("nodes", [])},
+        _eff_root or ".",
+    )
+    carried_ids = {n["id"] for n in carried_stubs}
+    existing_nodes = [n for n in existing_nodes if n.get("id") not in carried_ids] + carried_stubs
 
     base = (
         [{"nodes": existing_nodes, "edges": existing_edges, "hyperedges": carried_hyperedges}]

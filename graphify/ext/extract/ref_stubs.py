@@ -11,23 +11,25 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
-__all__ = ["drop_superseded_stubs", "fold_ref_stubs", "ref_stub_referrer_paths"]
+__all__ = ["carry_referenced_stubs", "drop_superseded_stubs", "fold_ref_stubs"]
 
 
 def fold_ref_stubs(nodes: list[dict], context_nodes: Iterable[dict] = ()) -> None:
     """Drop redundant ``ref_stub`` nodes from *nodes* in place.
 
     One definition (in *nodes* or the unchanged *context_nodes*): its stubs go and
-    every edge keeps the shared id. No definition: one stub stays. Definitions in
-    several files: stubs stay, so disambiguation treats them as before.
+    every edge keeps the shared id. No definition: one stub stays, none if
+    *context_nodes* already hold one. Definitions in several files: stubs stay, so
+    disambiguation treats them as before.
     """
+    context_nodes = list(context_nodes)
     definers: dict[str, set[str]] = {}
     for node in [*nodes, *context_nodes]:
         if not node.get("ref_stub"):
             definers.setdefault(str(node.get("id")), set()).add(str(node.get("source_file", "")))
 
     kept: list[dict] = []
-    stubbed: set[str] = set()
+    stubbed = {str(n.get("id")) for n in context_nodes if n.get("ref_stub")}
     for node in nodes:
         if node.get("ref_stub"):
             nid = str(node.get("id"))
@@ -54,62 +56,49 @@ def drop_superseded_stubs(existing: list[dict], chunks: Iterable[dict]) -> list[
     return [n for n in existing if not (n.get("ref_stub") and n.get("id") in defined)]
 
 
-def ref_stub_referrer_paths(
-    paths: list[Path],
-    graph: dict,
-    root: Path,
-    available_paths: list[Path],
-    changed_paths: list[Path],
-) -> list[Path]:
-    """Add to an incremental batch the files that point at a symbol it drops.
+def carry_referenced_stubs(
+    dropped: Iterable[dict],
+    surviving_edges: Iterable[dict],
+    fresh_ids: set,
+    root: str | Path,
+) -> list[dict]:
+    """Stubs for the saved nodes an incremental merge drops but others still use.
 
     Folding leaves one node per symbol, hosted in one file. When that file stops
     emitting it (call or definition removed, file deleted), the other files'
-    edges would go with it; reading those files again gives them a node to point
-    at. Only consumer-extractor files host such nodes.
+    edges would go with it. Each such node is kept as a stub of one of the files
+    that use it; no file is read again. Only nodes and edges of consumer-extractor
+    files take part.
     """
     from graphify.ext.extract.registry import resolve_consumer_extractors
-    from graphify.extractors.resolution import _cpp_source_key
 
     @lru_cache(maxsize=None)  # a graph repeats each source_file many times
-    def key_of(source_file: str) -> str:
-        return _cpp_source_key(source_file, root)
+    def owned(source_file: str) -> bool:
+        return bool(resolve_consumer_extractors(Path(root) / source_file))
 
-    batch = {_cpp_source_key(p, root) for p in paths}
-    selected = (batch | {_cpp_source_key(p, root) for p in changed_paths}) - {""}
-    owned = {key for key in selected if resolve_consumer_extractors(root / key)}
-    if not owned:
-        return paths
-    hosted = {
-        n.get("id")
-        for n in graph.get("nodes", [])
-        if key_of(n.get("source_file") or "") in owned
+    lost = {
+        n.get("id"): n
+        for n in dropped
+        if n.get("id") not in fresh_ids
+        and n.get("source_file")
+        and owned(n["source_file"])
     }
-    if not hosted:
-        return paths
-    allowed = {_cpp_source_key(p, root) for p in available_paths} - selected - {""}
-    referrers: dict[str, set[str]] = {}
-    for edge in graph.get("links", graph.get("edges", [])):
-        ends = {edge.get("source"), edge.get("target")} & hosted
+    users: dict[str, str] = {}
+    for edge in surviving_edges:
         source_file = edge.get("source_file")
-        if not ends or not source_file:
+        if not source_file:
             continue
-        if key_of(source_file) in allowed:
-            for nid in ends:
-                referrers.setdefault(nid, set()).add(key_of(source_file))
-    if not referrers:
-        return paths
-    # What the batch still emits stays; only the rest takes its edges with it.
-    for key in sorted(batch & owned):
-        path = root / key
-        if not path.is_file():
-            continue
-        for extractor in resolve_consumer_extractors(path):
-            try:
-                emitted = extractor(path).get("nodes", [])
-            except Exception:  # extract() reports the failure itself
-                continue
-            for node in emitted:
-                referrers.pop(node.get("id"), None)
-    lost = set().union(*referrers.values()) if referrers else set()
-    return paths + [root / key for key in sorted(lost) if (root / key).is_file()]
+        for nid in (edge.get("source"), edge.get("target")):
+            if nid in lost and owned(source_file):
+                users[nid] = min(source_file, users.get(nid, source_file))
+
+    carried = []
+    for nid, source_file in users.items():
+        node = lost[nid]
+        if not node.get("ref_stub"):  # a removed definition keeps only its identity
+            keys = ("id", "label", "file_type", "node_ref", "_origin")
+            node = {key: node[key] for key in keys if key in node}
+        node = {**node, "source_file": source_file, "ref_stub": True}
+        node.pop("source_location", None)
+        carried.append(node)
+    return carried

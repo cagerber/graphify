@@ -86,9 +86,12 @@ and a folder link never joins two nodes that already have an edge.
     consumer extractor that cannot be imported raises instead of being skipped.
 13. **Reference stubs** — a consumer node marked `ref_stub` is folded into the one file that defines
     its id (`graphify/ext/extract/ref_stubs.py`), so cross-file edges reach the definition. This holds
-    on incremental builds too: a saved stub gives way to a new definition, and when the file hosting a
-    symbol stops emitting it, the consumer files pointing at it are read again so their edges survive.
-    Links made by the post-extract merge hook are still refreshed by a full rebuild only.
+    on incremental builds too: a saved stub gives way to a new definition, and a symbol that an
+    incremental merge would drop while other consumer files still use it is kept as a stub of one of
+    them. No extra file is read, so such a stub can differ from a full rebuild (it keeps only the
+    dropped node's identity, and may outlast an edge the referrer would no longer resolve). Links made
+    by the post-extract merge hook are still refreshed by a full rebuild only. Upstream's `extract`
+    shrink guard is unchanged: a batch that both merges duplicates and removes nodes is still refused.
 14. **Qualified names** — `affected`, `path`, `explain` and `callers` (CLI and MCP) resolve a
     consumer's `node_ref` before any label (`graphify/ext/query/symbols.py`). Several nodes may carry
     one `node_ref`; the declaring one is chosen by structure (it owns `*.member_of` members, is a
@@ -123,9 +126,10 @@ Fork code inside upstream-owned files is limited to the **hook points** themselv
   existing call sites.
 - `graphify/affected.py` — consumer and reversed relations, `node_ref` seeds, the views of a symbol.
 - `graphify/serve.py` — one `node_ref` tier in `_find_node_tiers`.
-- `graphify/watch.py`, `graphify/cli.py` — the incremental builds forward `ref_stub` and call
-  `ref_stub_referrer_paths`; `cli.py` also takes `affected`'s config root from `.graphify_root`.
-- `graphify/build.py` — `build_merge` calls `drop_superseded_stubs`.
+- `graphify/watch.py`, `graphify/cli.py` — the incremental builds forward `ref_stub`; `cli.py` also
+  takes `affected`'s config root from `.graphify_root`.
+- `graphify/build.py`, `graphify/watch.py` — `build_merge`, `merge_raw_extraction` and the watch
+  reconcile call `carry_referenced_stubs`; `build_merge` also calls `drop_superseded_stubs`.
 
 Nothing else: `watch.py`, `__main__.py`, `cli.py`, `detect.py`, `cache.py` hold no fork-only
 function.
@@ -146,7 +150,7 @@ python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream pr
 ```
 
 Surface of this delta against `v0.9.120`: **38 fork-only files** and **23 upstream-owned files**
-modified (`+1027 / -230`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
+modified (`+1046 / -230`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
 `scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`

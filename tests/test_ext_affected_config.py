@@ -173,6 +173,7 @@ def _cli(root, *args, **env):
         cwd=root, env=environ, capture_output=True, text=True,
     )
     assert done.returncode == 0, done.stdout + done.stderr
+    assert "minted by two different files" not in done.stderr, done.stderr
     return done.stdout
 
 
@@ -207,16 +208,48 @@ def test_incremental_new_definition_and_caller_join_a_saved_stub(tmp_path, comma
 @pytest.mark.parametrize("command", sorted(_BUILDS))
 def test_incremental_keeps_other_callers_when_the_stub_host_changes(tmp_path, command, change):
     root = _zz_corpus(tmp_path)
-    for name in ("a.zz", "b.zz"):
-        (root / name).write_text("call X\n", encoding="utf-8")
+    # The host (first file) also loses nodes. The other file repeats a definition,
+    # so extracting it again would count a dedup merge and the write be refused.
+    (root / "a.zz").write_text("call X\ndef P\ndef Q\n", encoding="utf-8")
+    (root / "b.zz").write_text("call X\ndef D\ndef D\n", encoding="utf-8")
     _cli(root, *_BUILDS[command])
     host = _calls_and_symbol(root)[1][0][1]
-    other = "b" if host == "a.zz" else "a"
+    assert host == "a.zz"
+    other = "b"
     if change == "file deleted":
         (root / host).unlink()
     else:
-        (root / host).write_text("def Q\n", encoding="utf-8")
+        (root / host).write_text("def R\n", encoding="utf-8")
     _cli(root, *_BUILDS[command])
+
+    assert _calls_and_symbol(root) == (
+        ["sym:file:" + other], [("sym:X", other + ".zz", True)]
+    )
+
+
+@pytest.mark.parametrize("command", sorted(_BUILDS))
+def test_incremental_new_reference_to_a_saved_stub_while_nodes_go(tmp_path, command):
+    root = _zz_corpus(tmp_path)
+    (root / "a.zz").write_text("call X\n", encoding="utf-8")
+    (root / "b.zz").write_text("def P\ndef Q\n", encoding="utf-8")
+    _cli(root, *_BUILDS[command])
+    (root / "b.zz").write_text("call X\n", encoding="utf-8")
+    _cli(root, *_BUILDS[command])
+
+    callers, nodes = _calls_and_symbol(root)
+    assert callers == _BOTH and [n[0] for n in nodes] == ["sym:X"]
+
+
+def test_incremental_no_cluster_keeps_other_callers_when_the_stub_host_goes(tmp_path):
+    root = _zz_corpus(tmp_path)
+    build = ("extract", ".", "--code-only", "--no-cluster")
+    for name in ("a.zz", "b.zz"):
+        (root / name).write_text("call X\n", encoding="utf-8")
+    _cli(root, *build)
+    host = _calls_and_symbol(root)[1][0][1]
+    other = "b" if host == "a.zz" else "a"
+    (root / host).unlink()
+    _cli(root, *build)
 
     assert _calls_and_symbol(root) == (
         ["sym:file:" + other], [("sym:X", other + ".zz", True)]

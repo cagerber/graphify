@@ -5184,13 +5184,6 @@ def dispatch_command(cmd: str) -> None:
                         available_paths=[Path(p) for p in files_by_type.get("code", [])],
                         changed_paths=[Path(p) for p in [*deleted_files, *excluded_files, *graph_stale_sources]],
                     )
-                    # Fork: re-read the files that point at a symbol this batch drops.
-                    from graphify.ext.extract.ref_stubs import ref_stub_referrer_paths
-                    code_files = ref_stub_referrer_paths(
-                        code_files, _ctx_graph, _ctx_root,
-                        available_paths=[Path(p) for p in files_by_type.get("code", [])],
-                        changed_paths=[Path(p) for p in [*deleted_files, *excluded_files, *graph_stale_sources]],
-                    )
                     _ctx_live.difference_update(_ctx_identity(p) for p in code_files)
                     for _node in _ctx_graph.get("nodes", []):
                         if not _node.get("id") or not _ctx_is_ast_tier(_node):
