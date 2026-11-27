@@ -72,3 +72,15 @@ def test_heuristic_labelling_refuses_flags_it_would_ignore(tmp_path: Path, flag:
     assert result.returncode == 2
     assert flag.split("=")[0] in result.stderr
     assert not marker.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX claude shim")
+@pytest.mark.parametrize(
+    "flag", ["--heuristic=true", "--heuristic=1", "--heuristics", "--Heuristic", "-heuristic"]
+)
+def test_misspelled_heuristic_flag_is_refused_not_sent_to_an_llm(tmp_path: Path, flag: str) -> None:
+    result, marker = _run(tmp_path, "label", flag)
+
+    assert not marker.exists(), "an LLM backend was launched"
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert flag in result.stderr

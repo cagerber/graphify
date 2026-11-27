@@ -3140,8 +3140,11 @@ def dispatch_command(cmd: str) -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    # Fork: `label --heuristic` must not enter this branch, which calls an LLM.
-    elif cmd == "cluster-only" or (cmd == "label" and "--heuristic" not in sys.argv):
+    # Fork: `label --heuristic`, even misspelled (`--heuristic=1`), must not enter
+    # this branch, which calls an LLM.
+    elif cmd == "cluster-only" or (cmd == "label" and not any(
+        a.startswith("-") and a.lstrip("-").lower().startswith("heur") for a in sys.argv
+    )):
         # `label` is `cluster-only` that always (re)generates community names with
         # the configured backend, even when a .graphify_labels.json already exists.
         force_relabel = cmd == "label"
@@ -6380,7 +6383,7 @@ def dispatch_command(cmd: str) -> None:
         _wja(out_path2, merged2, ensure_ascii=False)
         print(f"Merged: {len(merged2['nodes'])} nodes, {len(merged2['edges'])} edges")
 
-    elif cmd == "label" and "--heuristic" in sys.argv:
+    elif cmd == "label":
         from graphify.heuristic_labels import apply_heuristic_labels
 
         unknown = [

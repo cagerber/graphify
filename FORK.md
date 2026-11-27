@@ -64,7 +64,7 @@ whose `.cls` files are something else entirely.
    removes a stale `graph.html` instead of leaving it behind.
 8. **Heuristic labelling** — `graphify label --heuristic` names communities from path/symbol
    structure with no LLM call (`graphify/heuristic_labels.py`, `graphify/node_paths.py`). No
-setting is needed. Plain `graphify label` and a first `graphify cluster-only` still use an LLM.
+   setting is needed. Plain `graphify label` and a first `graphify cluster-only` still use an LLM.
 9. **Node kinds** — `kind` on AST nodes (`file` / `class` / `function` / `method` / `other`) with
    `finalize_node_kinds()` wired into bulk Python extraction (`graphify/node_kind.py`).
 10. **CLI and UX** — `graphify callers "<symbol>"` lists direct inbound call edges, and
@@ -116,7 +116,7 @@ Fork-only modules — conflict-free by construction, they cannot collide with an
 | `graphify/enrich.py`, `heuristic_labels.py`, `node_kind.py`, `node_paths.py` | post-build enrich, heuristic labels, node kinds, path helpers |
 | `graphify/viz_contract.py`, `viz_layers.py`, `graphify/ext/viz/*` | viz protocol, layers, builders |
 | `scripts/upstream_footprint*.py/.txt` | fork-only guard rail (not wired into upstream CI) |
-| `tests/test_{enrich,config_enrich,ext_affected_config,heuristic_labels,node_kind,skill_version_scope,viz_layers,cli_keyboard_interrupt}.py`, `tests/ext/*` | fork tests |
+| `tests/test_{enrich,config_enrich,ext_affected_config,heuristic_labels,node_kind,skill_version_scope,viz_layers,cli_keyboard_interrupt,heuristic_label_cli}.py`, `tests/ext/*` | fork tests |
 
 Fork code inside upstream-owned files is limited to the **hook points** themselves:
 
@@ -150,8 +150,8 @@ python scripts/upstream_footprint.py          # per-file surface
 python scripts/upstream_footprint.py --check  # exits 1 on rewritten upstream prose
 ```
 
-Surface of this delta against `v0.9.120`: **38 fork-only files** and **23 upstream-owned files**
-modified (`+1046 / -230`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
+Surface of this delta against `v0.9.120`: **39 fork-only files** and **24 upstream-owned files**
+modified (`+1072 / -231`), with zero rewritten upstream comments or docstrings (one waiver, recorded in
 `scripts/upstream_footprint_allow.txt`: upstream's mojibake em dash inside the hook payload that is
 installed into users' `.git/hooks`, which would otherwise ship corrupted bytes). The numbers come from
 `scripts/upstream_footprint.py`, never from this prose — re-run it after any delta change. `ext.2`
