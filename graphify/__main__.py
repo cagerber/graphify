@@ -876,7 +876,7 @@ def main() -> None:
     except BrokenPipeError:
         _silence_broken_pipe()
     except KeyboardInterrupt:
-        # User/agent Ctrl+C during long update/extract — exit 130 without traceback (#ODS).
+        # User/agent Ctrl+C during long update/extract — exit 130 without traceback.
         sys.exit(130)
     except OSError as exc:
         # Windows surfaces a write to a closed pipe as OSError(EINVAL) rather than
