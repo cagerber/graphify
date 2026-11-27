@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from graphify.config import load_graphify_config
 from graphify.detect import CODE_EXTENSIONS
 from graphify.extract import (
     _DISPATCH,
@@ -333,3 +334,20 @@ def test_graphify_config_override_applies_to_a_repo_without_a_pyproject(tmp_path
     monkeypatch.setenv("GRAPHIFY_CONFIG", str(home / "missing.toml"))
     with pytest.raises(FileNotFoundError):
         resolve_consumer_extractors(cls)
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["this is [not toml\n", '[graphify]\ncode_extensions = [".cls"]\n'],
+    ids=["malformed", "no-tool-graphify-table"],
+)
+def test_graphify_config_override_that_carries_no_rules_is_an_error(
+    tmp_path, monkeypatch, body
+):
+    """Scanning on without the extractors would yield a wrong graph."""
+    config = tmp_path / "graphify.toml"
+    config.write_text(body, encoding="utf-8")
+    monkeypatch.setenv("GRAPHIFY_CONFIG", str(config))
+
+    with pytest.raises(ValueError, match="GRAPHIFY_CONFIG"):
+        load_graphify_config(tmp_path)

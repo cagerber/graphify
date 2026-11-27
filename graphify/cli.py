@@ -2948,6 +2948,7 @@ def dispatch_command(cmd: str) -> None:
             corpus=str(gp),
             result=result,
         )
+        _touch_query_stamp(gp)
     elif cmd == "section":
         _section_usage = ('Usage: graphify section "<heading>" | "path/file.md#<heading>" '
                           '[--max-chars N] [--graph path]')

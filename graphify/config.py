@@ -85,8 +85,9 @@ def config_override() -> Path | None:
     """``GRAPHIFY_CONFIG``: one TOML whose ``[tool.graphify]`` applies to every scan.
 
     Lets a shared install carry the extractor rules for repos that do not declare
-    them. ``path_glob`` stays relative to the scanned project. A missing file is an
-    error: silently scanning without the extractors yields a wrong graph.
+    them. ``path_glob`` stays relative to the scanned project. A missing or
+    unparseable file, or one without ``[tool.graphify]``, is an error: silently
+    scanning without the extractors yields a wrong graph.
     """
     raw = (os.environ.get("GRAPHIFY_CONFIG") or "").strip()
     if not raw:
@@ -113,7 +114,8 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
     ``mtime_ns``/size, so the entry is replaced rather than reused.
     """
     base = Path(root or ".").resolve()
-    pyproject = config_override() or _find_pyproject(base)
+    override = config_override()
+    pyproject = override or _find_pyproject(base)
     if pyproject is None:
         return _unconfigured()
 
@@ -128,11 +130,15 @@ def load_graphify_config(root: Path | str | None = None) -> GraphifyConfig:
 
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        if override:
+            raise ValueError(f"GRAPHIFY_CONFIG cannot be read: {pyproject}: {exc}") from exc
         return _unconfigured()
 
     section: dict[str, Any] = data.get("tool", {}).get("graphify", {})
     if not section:
+        if override:
+            raise ValueError(f"GRAPHIFY_CONFIG has no [tool.graphify] settings: {pyproject}")
         cfg = _unconfigured()
         _remember_config(key, cfg)
         return cfg

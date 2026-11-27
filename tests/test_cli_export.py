@@ -33,7 +33,7 @@ def _rename(src: Path, dst: Path) -> None:
 def _run(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     if env is None:
         env = os.environ.copy()
-        # Isolate default output-dir tests from caller GRAPHIFY_OUT (e.g. ODS .env).
+        # Isolate default output-dir tests from caller GRAPHIFY_OUT (e.g. a repo .env).
         env.pop("GRAPHIFY_OUT", None)
     return subprocess.run(
         [PYTHON, "-m", "graphify"] + args,

@@ -41,7 +41,7 @@ whose `.cls` files are something else entirely.
    when paths are used, not at import, so an env var set after import still applies
    (`graphify.paths.graphify_out_dir` / `graphify_out_for_watch` / `graphify_out_rel`,
    `GRAPHIFY_OUT_NAME`); manifest, cache, memory, converted and scan-skip-dir paths all route
-   through it, and a *relative* out dir with a subdirectory target (`graphify update src/BI`) writes
+   through it, and a *relative* out dir with a subdirectory target (`graphify update src/pkg`) writes
    to `<repo>/.local/graphify-out`, not `<target>/.local/graphify-out`. `skip_dir_names()` prunes
    only the configured out-dir name at top level, so a nested `graphify-out/nlp` cannot name-prune
    same-named source directories.
@@ -211,13 +211,17 @@ collapse_tests_dir = true
 |----------|---------|--------|
 | `GRAPHIFY_OUT` | `graphify-out` | Output directory (consumers typically use `.local/graphify-out`) |
 | `GRAPHIFY_OUT_NAME` | `graphify-out` | Name used when resolving defaults |
-| `GRAPHIFY_CONFIG` | unset | TOML whose `[tool.graphify]` replaces the scanned project's own |
+| `GRAPHIFY_CONFIG` | unset | TOML whose `[tool.graphify]` replaces the scanned project's own; a missing or unparseable file, or one without that table, is an error |
 | `GRAPHIFY_CODE_EXTENSIONS` | from `[tool.graphify]` | Extra code suffixes, comma/space separated |
 | `GRAPHIFY_AST_PROGRESS_INTERVAL` | `1000` | AST progress log interval (large corpora) |
 | `GRAPHIFY_FOLDER_EDGES` | `1` | `enrich` / post-`update` folder edges |
 | `GRAPHIFY_FOLDER_AFFINITY` | `1` | Folder links in aggregated `graph.html` |
 | `GRAPHIFY_PYTEST_ENRICH` | `1` | Pytest markers + `tests_covers` on `update` |
 | `GRAPHIFY_HEURISTIC_LABELS` | from `[tool.graphify]` or `0` | Heuristic relabel after `update` |
+
+The CLI also fills **unset** variables from `.env`, `.env.local` and `.env.shared`, from the working
+directory up to the git root (`_load_visible_env()` in `graphify/__main__.py`). Every key in those
+files is loaded, not only `GRAPHIFY_*`; exported values win.
 
 **Deprecated CLI aliases:** `label-communities` → `label --heuristic`, `folder-edges` →
 `enrich --folder-links`.
