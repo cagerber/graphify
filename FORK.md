@@ -63,7 +63,8 @@ whose `.cls` files are something else entirely.
    `viz --test-files-only` file-hub layer; `GRAPHIFY_VIZ_NODE_LIMIT=0` is a kill switch that also
    removes a stale `graph.html` instead of leaving it behind.
 8. **Heuristic labelling** — `graphify label --heuristic` names communities from path/symbol
-   structure with no LLM call (`graphify/heuristic_labels.py`, `graphify/node_paths.py`).
+   structure with no LLM call (`graphify/heuristic_labels.py`, `graphify/node_paths.py`). No
+setting is needed. Plain `graphify label` and a first `graphify cluster-only` still use an LLM.
 9. **Node kinds** — `kind` on AST nodes (`file` / `class` / `function` / `method` / `other`) with
    `finalize_node_kinds()` wired into bulk Python extraction (`graphify/node_kind.py`).
 10. **CLI and UX** — `graphify callers "<symbol>"` lists direct inbound call edges, and

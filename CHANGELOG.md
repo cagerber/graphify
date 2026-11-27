@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/Graphify-Labs/graphify/releases)
 
+## Unreleased (fork)
+
+- Fix: **label** `graphify label --heuristic` (and its alias `label-communities`) runs the heuristic labeller and calls no LLM. Before, it ran LLM labelling. It now refuses flags it would ignore, such as `--backend`.
+
 ## 0.9.120 (2026-11-25)
 
 A batch of resolution, serve, export, clustering and performance fixes across eight community pull requests. The Python function-local-import change alters node/edge output, so the AST cache schema bumps (55 to 56) and Python re-extracts on the first build after upgrading; the other fixes need no rebuild.
